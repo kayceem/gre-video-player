@@ -8,4 +8,12 @@ export default defineConfig({
     tailwindcss(),
     react(),
   ],
+  server: {
+    proxy: {
+      "/playlist": "http://localhost:8000",
+      "/progress": "http://localhost:8000",
+      "/video-progress": "http://localhost:8000",
+      "/videos": "http://localhost:8000"
+    }
+  }
 })

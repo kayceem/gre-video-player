@@ -1,0 +1,43 @@
+{
+  "users": {
+    "ce805e6e-3728-4d88-aeab-bffb5bc0f526": {
+      "Arithmetic Foundation/Integers.mp4": {
+        "resume_position": 100.0,
+        "watched": true,
+        "updated_at": "2025-12-25T16:51:11.180722+00:00"
+      },
+      "Arithmetic Foundation/Number Line Intro.mp4": {
+        "resume_position": 142.237333,
+        "watched": true,
+        "updated_at": "2025-12-25T16:34:19.473278+00:00"
+      },
+      "Arithmetic Foundation/Arithmetic Operations.mp4": {
+        "resume_position": 6.109333,
+        "watched": false,
+        "updated_at": "2025-12-25T16:52:21.282684+00:00"
+      },
+      "Text Completion and Sentence Equivalence Strategy/The Pairing Strategy.mp4": {
+        "resume_position": 20.437333,
+        "watched": false,
+        "updated_at": "2025-12-25T17:02:51.314903+00:00"
+      },
+      "Text Completion and Sentence Equivalence Strategy/Pairing Easy, Medium, Hard.mp4": {
+        "resume_position": 0.0,
+        "watched": false,
+        "updated_at": "2025-12-25T17:02:19.225970+00:00"
+      }
+    },
+    "b1e445de-310b-48e7-bd1c-2ea7994639ad": {
+      "Arithmetic Foundation/Integers.mp4": {
+        "resume_position": 11.472702979320216,
+        "watched": false,
+        "updated_at": "2025-12-25T16:54:29.649343+00:00"
+      },
+      "Arithmetic Foundation/Number Line Intro.mp4": {
+        "resume_position": 10.310279280995697,
+        "watched": false,
+        "updated_at": "2025-12-25T16:54:52.286347+00:00"
+      }
+    }
+  }
+}
