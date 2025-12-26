@@ -41,6 +41,8 @@ export function VideoPane(props: Props) {
       if (resume > 1 && d > 0 && resume < d - 0.5) {
         try { el.currentTime = resume; } catch {}
       }
+      // Autoplay after loading
+      el.play().catch(() => {});
     };
 
     el.addEventListener("loadedmetadata", onLoaded);
@@ -205,7 +207,7 @@ function TopBar({ dark, toggleDark }: { dark: boolean; toggleDark: () => void })
   return (
     <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur flex items-center justify-between">
       <div className="text-sm text-slate-600 dark:text-slate-300">
-        Swipe on the video (mobile) for next/prev
+        Swipe on the video
       </div>
       <button
         onClick={toggleDark}
