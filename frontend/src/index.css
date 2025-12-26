@@ -1,7 +1,4 @@
-@import 'tailwindcss';
+@import "tailwindcss";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-:root { color-scheme: light dark; }
+/* Make `dark:` depend on the .dark class instead of prefers-color-scheme */
+@custom-variant dark (&:where(.dark, .dark *));

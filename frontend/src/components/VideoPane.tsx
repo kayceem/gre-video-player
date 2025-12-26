@@ -116,6 +116,13 @@ export function VideoPane(props: Props) {
     if (next) setCurrentByFile(next.file);
   };
 
+  const handleMarkAsWatched = async () => {
+    if (!current) return;
+    const pos = videoRef.current?.currentTime || 0;
+    markLocalProgress(current.file, pos, true);
+    try { await postProgress(current.file, pos, true); } catch {}
+  };
+
   // Simple swipe left/right on mobile to next/prev
   const touch = useRef<{ x: number; t: number } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => { touch.current = { x: e.clientX, t: Date.now() }; };
@@ -160,6 +167,14 @@ export function VideoPane(props: Props) {
             Prev
           </button>
           <button
+            onClick={handleMarkAsWatched}
+            disabled={current.watched}
+            className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 disabled:opacity-50 bg-blue-50 dark:bg-blue-900/20"
+            title={current.watched ? "Already marked as watched" : "Mark this video as watched"}
+          >
+            {current.watched ? "✓ Watched" : "Mark Watched"}
+          </button>
+          <button
             disabled={!next}
             onClick={() => next && setCurrentByFile(next.file)}
             className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 disabled:opacity-50"
@@ -169,9 +184,9 @@ export function VideoPane(props: Props) {
         </div>
       </div>
 
-    <div className="px-0 md:px-4 pb-0 md:pb-4 flex-1 min-h-0">
+      <div className="px-0 md:px-4 pb-0 md:pb-4 flex-1 min-h-0">
         <div className="h-full rounded-none md:rounded-xl overflow-hidden bg-black shadow">
-            <video
+          <video
             ref={videoRef}
             className="w-full h-full object-contain"
             controls
@@ -179,10 +194,10 @@ export function VideoPane(props: Props) {
             onTimeUpdate={onTimeUpdate}
             onEnded={onEnded}
             playsInline
-            />
+          />
         </div>
+      </div>
     </div>
-</div>
   );
 }
 
