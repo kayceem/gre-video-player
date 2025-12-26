@@ -12,30 +12,54 @@ type Props = {
   setQuery: (s: string) => void;
   filter: "all" | "watched" | "unwatched";
   setFilter: (f: "all" | "watched" | "unwatched") => void;
+  isCollapsed: boolean;
+  toggleCollapse: () => void;
 };
 
 export function Sidebar(props: Props) {
-  const { playlist, openCats, toggleCat, currentFile, onPick, query, setQuery, filter, setFilter } = props;
+  const { playlist, openCats, toggleCat, currentFile, onPick, query, setQuery, filter, setFilter, isCollapsed, toggleCollapse } = props;
 
   const q = query.trim().toLowerCase();
 
+  if (isCollapsed) {
+    return (
+      <div className="h-full flex items-start p-2 border-t md:border-t-0 md:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
+        <button
+          onClick={toggleCollapse}
+          className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900"
+          title="Show sidebar"
+        >
+          <span className="text-slate-600 dark:text-slate-400">▸</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    // Sidebar.tsx (outermost div className)
     <div className="h-full min-h-0 flex flex-col border-t md:border-t-0 md:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
       <div className="p-4 space-y-3">
-        <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{playlist.title}</div>
+        <div className="flex items-center justify-between">
+          <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{playlist.title}</div>
+          <button
+            onClick={toggleCollapse}
+            className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900"
+            title="Hide sidebar"
+          >
+            <span className="text-slate-600 dark:text-slate-400">◂</span>
+          </button>
+        </div>
 
         <div className="flex gap-2">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search videos…"
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm outline-none"
+            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 dark:text-slate-300 px-3 py-2 text-sm outline-none"
           />
           <select
             value={filter}
             onChange={(e) => setFilter(e.target.value as any)}
-            className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-2 text-sm"
+            className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:text-slate-300 dark:bg-slate-900 px-2 py-2 text-sm"
           >
             <option value="all">All</option>
             <option value="unwatched">Unwatched</option>

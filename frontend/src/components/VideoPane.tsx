@@ -164,14 +164,14 @@ export function VideoPane(props: Props) {
           <button
             disabled={!prev}
             onClick={() => prev && setCurrentByFile(prev.file)}
-            className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 disabled:opacity-50"
+            className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 dark:text-slate-300 disabled:opacity-50"
           >
             Prev
           </button>
           <button
             onClick={handleMarkAsWatched}
             disabled={current.watched}
-            className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 disabled:opacity-50 bg-blue-50 dark:bg-blue-900/20"
+            className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 disabled:opacity-50 bg-blue-50 dark:text-slate-300 dark:bg-blue-900/20"
             title={current.watched ? "Already marked as watched" : "Mark this video as watched"}
           >
             {current.watched ? "✓ Watched" : "Mark Watched"}
@@ -179,7 +179,7 @@ export function VideoPane(props: Props) {
           <button
             disabled={!next}
             onClick={() => next && setCurrentByFile(next.file)}
-            className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 disabled:opacity-50"
+            className="px-3 py-2 rounded-lg border border-slate-300 dark:text-slate-300 dark:border-slate-700 disabled:opacity-50"
           >
             Next
           </button>
@@ -211,7 +211,7 @@ function TopBar({ dark, toggleDark }: { dark: boolean; toggleDark: () => void })
       </div>
       <button
         onClick={toggleDark}
-        className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-sm"
+        className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 dark:text-slate-300 text-sm"
         title="Toggle dark mode (or press 'd')"
       >
         {dark ? "Light" : "Dark"}

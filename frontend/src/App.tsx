@@ -12,7 +12,7 @@ function firstVideo(pl: Playlist): VideoItem | null {
 export default function App() {
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [currentFile, setCurrentFile] = useState<string | null>(null);
-
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [openCats, setOpenCats] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "watched" | "unwatched">("all");
@@ -113,18 +113,20 @@ export default function App() {
         </div>
 
         {/* Sidebar SECOND on mobile */}
-        <div className="order-2 md:order-1 w-full md:w-[360px] md:max-w-[85vw] h-[50dvh] md:h-full shrink-0 min-h-0">
-        <Sidebar
-            playlist={playlist}
-            openCats={openCats}
-            toggleCat={toggleCat}
-            currentFile={currentFile}
-            onPick={(v) => setCurrentFile(v.file)}
-            query={query}
-            setQuery={setQuery}
-            filter={filter}
-            setFilter={setFilter}
-        />
+        <div className={`order-2 md:order-1 ${sidebarCollapsed ? 'w-auto' : 'w-full md:w-[360px] md:max-w-[85vw]'} h-[50dvh] md:h-full shrink-0 min-h-0`}>
+            <Sidebar
+                playlist={playlist}
+                openCats={openCats}
+                toggleCat={toggleCat}
+                currentFile={currentFile}
+                onPick={(v) => setCurrentFile(v.file)}
+                query={query}
+                setQuery={setQuery}
+                filter={filter}
+                setFilter={setFilter}
+                isCollapsed={sidebarCollapsed}
+                toggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+            />
         </div>
     </div>
     );
