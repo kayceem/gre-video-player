@@ -42,14 +42,19 @@
         "updated_at": "2025-12-26T04:34:49.905203+00:00"
       },
       "Text Completion and Sentence Equivalence Strategy/Cover the Answers.mp4": {
-        "resume_position": 284.203666,
+        "resume_position": 0.928,
         "watched": true,
-        "updated_at": "2025-12-26T04:42:51.977229+00:00"
+        "updated_at": "2025-12-26T04:59:47.802433+00:00"
       },
       "Text Completion and Sentence Equivalence Strategy/Math Strategy 1.mp4": {
-        "resume_position": 143.551999,
+        "resume_position": 436.405331,
         "watched": false,
-        "updated_at": "2025-12-26T04:45:17.769523+00:00"
+        "updated_at": "2025-12-26T05:08:49.714395+00:00"
+      },
+      "Text Completion and Sentence Equivalence Strategy/Math Strategy 2.mp4": {
+        "resume_position": 2.933333,
+        "watched": false,
+        "updated_at": "2025-12-26T05:05:01.684373+00:00"
       }
     },
     "b1e445de-310b-48e7-bd1c-2ea7994639ad": {
@@ -79,9 +84,19 @@
         "updated_at": "2025-12-25T17:26:31.621777+00:00"
       },
       "Text Completion and Sentence Equivalence Strategy/Pairing Strategy Trickiness.mp4": {
-        "resume_position": 164.9990927110169,
+        "resume_position": 166.0498600519895,
         "watched": false,
-        "updated_at": "2025-12-25T17:30:24.321977+00:00"
+        "updated_at": "2025-12-26T05:13:57.071693+00:00"
+      },
+      "Text Completion and Sentence Equivalence Strategy/Idea Chunks.mp4": {
+        "resume_position": 2.664537671990776,
+        "watched": false,
+        "updated_at": "2025-12-26T05:14:02.679332+00:00"
+      },
+      "Text Completion and Sentence Equivalence Strategy/Cover the Answers.mp4": {
+        "resume_position": 62.63466519333684,
+        "watched": false,
+        "updated_at": "2025-12-26T05:15:09.237290+00:00"
       }
     }
   }
