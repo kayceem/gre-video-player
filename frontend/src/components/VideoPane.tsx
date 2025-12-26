@@ -169,20 +169,20 @@ export function VideoPane(props: Props) {
         </div>
       </div>
 
-      <div className="px-4 pb-4 flex-1">
-        <div className="h-full rounded-xl overflow-hidden bg-black shadow">
-          <video
+    <div className="px-0 md:px-4 pb-0 md:pb-4 flex-1 min-h-0">
+        <div className="h-full rounded-none md:rounded-xl overflow-hidden bg-black shadow">
+            <video
             ref={videoRef}
-            className="w-full h-full"
+            className="w-full h-full object-contain"
             controls
             src={videoUrl(current.file)}
             onTimeUpdate={onTimeUpdate}
             onEnded={onEnded}
             playsInline
-          />
+            />
         </div>
-      </div>
     </div>
+</div>
   );
 }
 

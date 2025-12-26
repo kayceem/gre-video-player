@@ -20,7 +20,8 @@ export function Sidebar(props: Props) {
   const q = query.trim().toLowerCase();
 
   return (
-    <div className="h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
+    // Sidebar.tsx (outermost div className)
+    <div className="h-full min-h-0 flex flex-col border-t md:border-t-0 md:border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
       <div className="p-4 space-y-3">
         <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{playlist.title}</div>
 

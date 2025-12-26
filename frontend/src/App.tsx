@@ -97,32 +97,35 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="min-h-screen h-screen flex bg-slate-50 dark:bg-slate-900">
-      <div className="w-[360px] max-w-[85vw] h-full">
-        <Sidebar
-          playlist={playlist}
-          openCats={openCats}
-          toggleCat={toggleCat}
-          currentFile={currentFile}
-          onPick={(v) => setCurrentFile(v.file)}
-          query={query}
-          setQuery={setQuery}
-          filter={filter}
-          setFilter={setFilter}
-        />
-      </div>
-
-      <div className="flex-1 h-full">
+// App.tsx (replace the return layout wrapper)
+    return (
+    <div className="min-h-screen h-[100dvh] flex flex-col md:flex-row bg-slate-50 dark:bg-slate-900">
+        {/* Video FIRST on mobile */}
+        <div className="order-1 md:order-2 w-full flex-1 h-[50dvh] md:h-full min-h-0">
         <VideoPane
-          playlist={playlist}
-          current={current}
-          setCurrentByFile={setCurrentByFile}
-          markLocalProgress={markLocalProgress}
-          dark={dark}
-          toggleDark={() => setDark((d) => !d)}
+            playlist={playlist}
+            current={current}
+            setCurrentByFile={setCurrentByFile}
+            markLocalProgress={markLocalProgress}
+            dark={dark}
+            toggleDark={() => setDark((d) => !d)}
         />
-      </div>
+        </div>
+
+        {/* Sidebar SECOND on mobile */}
+        <div className="order-2 md:order-1 w-full md:w-[360px] md:max-w-[85vw] h-[50dvh] md:h-full shrink-0 min-h-0">
+        <Sidebar
+            playlist={playlist}
+            openCats={openCats}
+            toggleCat={toggleCat}
+            currentFile={currentFile}
+            onPick={(v) => setCurrentFile(v.file)}
+            query={query}
+            setQuery={setQuery}
+            filter={filter}
+            setFilter={setFilter}
+        />
+        </div>
     </div>
-  );
+    );
 }
