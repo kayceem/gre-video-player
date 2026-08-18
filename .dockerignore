@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+node_modules
+**/node_modules
+**/dist
+GRE Quant
+GRE Verbal
+generated/study.sqlite
+generated/study.sqlite-shm
+generated/study.sqlite-wal
+*.log

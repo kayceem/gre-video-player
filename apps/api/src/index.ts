@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import argon2 from "argon2";
 import Database from "better-sqlite3";
@@ -11,7 +11,12 @@ import { z } from "zod";
 
 const root = resolve(import.meta.dirname, "../../..");
 const catalogsPath = join(root, "generated", "catalogs");
-const db = new Database(process.env.DATABASE_PATH ?? join(root, "generated", "study.sqlite"));
+const webDistPath = join(root, "apps", "web", "dist");
+const mediaRoot = resolve(process.env.MEDIA_ROOT ?? root);
+const isProduction = process.env.NODE_ENV === "production";
+const databasePath = process.env.DATABASE_PATH ?? join(root, "generated", "study.sqlite");
+mkdirSync(dirname(databasePath), { recursive: true });
+const db = new Database(databasePath);
 db.pragma("journal_mode = WAL");
 db.exec(`
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
@@ -20,17 +25,55 @@ CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE
 CREATE TABLE IF NOT EXISTS video_progress (user_id TEXT NOT NULL, video_id TEXT NOT NULL, position_seconds REAL NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,video_id));
 CREATE TABLE IF NOT EXISTS question_attempts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, question_id TEXT NOT NULL, selected_choice_ids TEXT NOT NULL, correct INTEGER NOT NULL, score REAL NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, submitted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS question_state (user_id TEXT NOT NULL, question_id TEXT NOT NULL, bookmarked INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,question_id));
+CREATE INDEX IF NOT EXISTS sessions_active_user_idx ON sessions (user_id, expires_at);
+CREATE INDEX IF NOT EXISTS video_progress_user_idx ON video_progress (user_id, updated_at);
+CREATE INDEX IF NOT EXISTS question_attempts_user_idx ON question_attempts (user_id, submitted_at);
 `);
 
-const app = express(); app.set("trust proxy", 1); app.use(express.json({ limit: "120kb" })); app.use(cookieParser());
+const app = express();
+app.disable("x-powered-by");
+app.set("trust proxy", process.env.TRUST_PROXY === "true" || process.env.TRUST_PROXY === "1");
+app.use((req, res, next) => {
+  res.set({
+    "Content-Security-Policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+  });
+  if (req.path.startsWith("/api/")) res.set("Cache-Control", "no-store");
+  next();
+});
+app.use((req, res, next) => {
+  if (!isProduction || !["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  const origin = req.get("origin");
+  if (!origin) return next();
+  const expectedOrigin = process.env.ALLOWED_ORIGIN;
+  if (!expectedOrigin || origin !== expectedOrigin) return res.status(403).json({ error: "Request origin is not allowed." });
+  next();
+});
+app.use(express.json({ limit: "120kb" })); app.use(cookieParser());
 const now = () => new Date().toISOString(); const uid = () => randomBytes(18).toString("base64url"); const tokenHash = (t: string) => createHash("sha256").update(t).digest("hex");
 type CurrentUser = { id: string; username: string };
 declare global { namespace Express { interface Request { user?: CurrentUser } } }
 
+type RateLimit = { count: number; resetAt: number };
+const rateLimits = new Map<string, RateLimit>();
+function rateLimit(prefix: string, maxRequests: number, windowMs: number) {
+  return (req: Request, res: Response, next: express.NextFunction) => {
+    const key = `${prefix}:${req.ip}`; const timestamp = Date.now(); const current = rateLimits.get(key);
+    const value = !current || current.resetAt <= timestamp ? { count: 1, resetAt: timestamp + windowMs } : { ...current, count: current.count + 1 };
+    rateLimits.set(key, value); res.set("RateLimit-Limit", String(maxRequests)); res.set("RateLimit-Reset", String(Math.ceil(value.resetAt / 1000)));
+    if (value.count > maxRequests) { res.set("Retry-After", String(Math.ceil((value.resetAt - timestamp) / 1000))); return res.status(429).json({ error: "Too many requests. Please try again shortly." }); }
+    next();
+  };
+}
+setInterval(() => { const timestamp = Date.now(); for (const [key, value] of rateLimits) if (value.resetAt <= timestamp) rateLimits.delete(key); }, 60_000).unref();
+
 async function createSession(res: Response, user: CurrentUser) {
   const token = randomBytes(32).toString("base64url"); const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
   db.prepare("INSERT INTO sessions (id, token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?)").run(uid(), tokenHash(token), user.id, expires, now());
-  res.cookie("gre_session", token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 1000 * 60 * 60 * 24 * 30, path: "/" });
+  res.cookie("gre_session", token, { httpOnly: true, sameSite: isProduction ? "strict" : "lax", secure: isProduction, maxAge: 1000 * 60 * 60 * 24 * 30, path: "/" });
 }
 app.use((req, _res, next) => {
   const token = req.cookies.gre_session; if (!token) return next();
@@ -39,26 +82,27 @@ app.use((req, _res, next) => {
 });
 function requireUser(req: Request, res: Response, next: express.NextFunction) { if (!req.user) return res.status(401).json({ error: "Session expired. Sign in to save progress." }); next(); }
 
-app.post("/api/auth/register", async (req, res, next) => { try {
+app.post("/api/auth/register", rateLimit("register", 8, 15 * 60_000), async (req, res, next) => { try {
   const input = z.object({ username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/), password: z.string().min(10).max(200) }).parse(req.body);
   const user = { id: uid(), username: input.username.toLowerCase() };
   try { db.prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)").run(user.id, user.username, await argon2.hash(input.password, { type: argon2.argon2id }), now()); }
   catch (error: any) { if (error.code?.startsWith("SQLITE_CONSTRAINT")) return res.status(409).json({ error: "That username is already in use." }); throw error; }
   await createSession(res, user); res.status(201).json({ user });
 } catch (error) { next(error); } });
-app.post("/api/auth/login", async (req, res, next) => { try {
+app.post("/api/auth/login", rateLimit("login", 10, 15 * 60_000), async (req, res, next) => { try {
   const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); const row = db.prepare("SELECT id, username, password_hash FROM users WHERE username = ?").get(input.username.trim().toLowerCase()) as any;
   if (!row || !(await argon2.verify(row.password_hash, input.password))) return res.status(401).json({ error: "Username or password is incorrect." });
   await createSession(res, row); res.json({ user: { id: row.id, username: row.username } });
 } catch (error) { next(error); } });
-app.post("/api/auth/logout", (req, res) => { const token = req.cookies.gre_session; if (token) db.prepare("UPDATE sessions SET revoked_at = ? WHERE token_hash = ?").run(now(), tokenHash(token)); res.clearCookie("gre_session", { path: "/" }).status(204).end(); });
+app.post("/api/auth/logout", (req, res) => { const token = req.cookies.gre_session; if (token) db.prepare("UPDATE sessions SET revoked_at = ? WHERE token_hash = ?").run(now(), tokenHash(token)); res.clearCookie("gre_session", { path: "/", httpOnly: true, sameSite: isProduction ? "strict" : "lax", secure: isProduction }).status(204).end(); });
 app.get("/api/auth/me", (req, res) => res.json({ user: req.user ?? null }));
 
-const catalogCache = new Map<string, { body: Buffer; etag: string; questions?: Question[] }>();
+type CatalogEntry = { body: Buffer; etag: string; questions?: Question[]; videos?: Array<{ id: string }> };
+const catalogCache = new Map<string, CatalogEntry>();
 function catalog(kind: "videos" | "questions", subject: Subject) {
   const key = `${kind}-${subject}`; const cached = catalogCache.get(key); if (cached) return cached;
   const body = readFileSync(join(catalogsPath, `${key}.json.gz`)); const parsed = JSON.parse(gunzipSync(body).toString("utf8"));
-  const value = { body, etag: `\"${parsed.contentVersion}\"`, ...(kind === "questions" ? { questions: QuestionCatalogSchema.parse(parsed).data } : {}) }; catalogCache.set(key, value); return value;
+  const value: CatalogEntry = { body, etag: `\"${parsed.contentVersion}\"`, ...(kind === "questions" ? { questions: QuestionCatalogSchema.parse(parsed).data } : { videos: parsed.data.categories.flatMap((category: { videos: Array<{ id: string }> }) => category.videos) }) }; catalogCache.set(key, value); return value;
 }
 app.get(/^\/api\/catalog\/(videos|questions)\/(quant|verbal)$/, (req, res, next) => { try {
   const kind = String(req.params[0]) as "videos" | "questions";
@@ -68,6 +112,7 @@ app.get(/^\/api\/catalog\/(videos|questions)\/(quant|verbal)$/, (req, res, next)
   if (req.headers["if-none-match"] === entry.etag) return res.status(304).end(); res.send(entry.body);
 } catch (error) { next(error); } });
 function questionFor(id: string) { const subject = id.startsWith("quant:") ? "quant" : id.startsWith("verbal:") ? "verbal" : null; return subject ? catalog("questions", subject).questions?.find(question => question.id === id) : undefined; }
+function videoExists(id: string) { const subject = id.startsWith("quant:") ? "quant" : id.startsWith("verbal:") ? "verbal" : null; return Boolean(subject && catalog("videos", subject).videos?.some(video => video.id === id)); }
 function responseFromSelections(question: Question, selectedChoiceIds: string[]) {
   const choices = question.choiceGroups.flatMap(group => group.choices);
   const labelFor = (id: string) => choices.find(choice => choice.id === id)?.label ?? id;
@@ -110,11 +155,11 @@ app.delete("/api/me/progress/:subject", requireUser, (req, res, next) => { try {
   res.json({ ok: true });
 } catch (error) { next(error); } });
 app.put("/api/me/videos/:videoId/progress", requireUser, (req, res, next) => { try {
-  const input = ProgressSchema.parse(req.body); db.prepare(`INSERT INTO video_progress (user_id, video_id, position_seconds, watched, completed, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id,video_id) DO UPDATE SET position_seconds=excluded.position_seconds, watched=excluded.watched, completed=excluded.completed, updated_at=excluded.updated_at`).run(req.user!.id, req.params.videoId, input.positionSeconds, Number(input.watched), Number(input.completed), now());
+  const input = ProgressSchema.parse(req.body); const videoId = z.string().min(1).parse(req.params.videoId); if (!videoExists(videoId)) return res.status(404).json({ error: "Video is not available." }); db.prepare(`INSERT INTO video_progress (user_id, video_id, position_seconds, watched, completed, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id,video_id) DO UPDATE SET position_seconds=excluded.position_seconds, watched=excluded.watched, completed=excluded.completed, updated_at=excluded.updated_at`).run(req.user!.id, videoId, input.positionSeconds, Number(input.watched), Number(input.completed), now());
   res.json({ ok: true });
 } catch (error) { next(error); } });
 app.post("/api/me/questions/:questionId/attempts", requireUser, (req, res, next) => { try {
-  const input = AnswerSubmissionSchema.parse(req.body); const old = db.prepare("SELECT correct, score, selected_choice_ids AS selectedChoiceIds FROM question_attempts WHERE idempotency_key = ?").get(input.idempotencyKey) as any;
+  const input = AnswerSubmissionSchema.parse(req.body); const old = db.prepare("SELECT correct, score, selected_choice_ids AS selectedChoiceIds FROM question_attempts WHERE idempotency_key = ? AND user_id = ? AND question_id = ?").get(input.idempotencyKey, req.user!.id, req.params.questionId) as any;
   const question = questionFor(String(req.params.questionId)); if (!question) return res.status(404).json({ error: "Question is not available." });
   const response = AnswerSchemaByQuestionType[question.type].parse(input.response ?? responseFromSelections(question, input.selectedChoiceIds));
   if (response.question_id !== question.id) return res.status(400).json({ error: "That answer belongs to a different question." });
@@ -127,7 +172,7 @@ app.post("/api/me/questions/:questionId/attempts", requireUser, (req, res, next)
   if (!old) db.prepare("INSERT INTO question_attempts (id,user_id,question_id,selected_choice_ids,correct,score,idempotency_key,submitted_at) VALUES (?,?,?,?,?,?,?,?)").run(uid(), req.user!.id, question.id, JSON.stringify(response), Number(correct), score, input.idempotencyKey, now());
   res.json({ correct: old ? Boolean(old.correct) : correct, score: old ? old.score : score, correctChoiceIds: question.correctChoiceIds, solution: question.solution, hasSolutionVideo: Boolean(question.solution.videoId) });
 } catch (error) { next(error); } });
-app.put("/api/me/questions/:questionId/bookmark", requireUser, (req, res, next) => { try { const body = z.object({ bookmarked: z.boolean() }).parse(req.body); db.prepare("INSERT INTO question_state (user_id,question_id,bookmarked,updated_at) VALUES (?,?,?,?) ON CONFLICT(user_id,question_id) DO UPDATE SET bookmarked=excluded.bookmarked, updated_at=excluded.updated_at").run(req.user!.id, req.params.questionId, Number(body.bookmarked), now()); res.json({ bookmarked: body.bookmarked }); } catch (error) { next(error); } });
+app.put("/api/me/questions/:questionId/bookmark", requireUser, (req, res, next) => { try { const body = z.object({ bookmarked: z.boolean() }).parse(req.body); const questionId = z.string().min(1).parse(req.params.questionId); if (!questionFor(questionId)) return res.status(404).json({ error: "Question is not available." }); db.prepare("INSERT INTO question_state (user_id,question_id,bookmarked,updated_at) VALUES (?,?,?,?) ON CONFLICT(user_id,question_id) DO UPDATE SET bookmarked=excluded.bookmarked, updated_at=excluded.updated_at").run(req.user!.id, questionId, Number(body.bookmarked), now()); res.json({ bookmarked: body.bookmarked }); } catch (error) { next(error); } });
 
 const mediaMap = () => JSON.parse(readFileSync(join(catalogsPath, "media-map.json"), "utf8")) as Record<string, string>;
 function streamFile(file: string, req: Request, res: Response) {
@@ -140,9 +185,40 @@ function streamFile(file: string, req: Request, res: Response) {
 }
 function streamMedia(req: Request, res: Response, next: express.NextFunction) { try {
   const rel = mediaMap()[String(req.params.mediaId)]; if (!rel || rel.includes("..")) return res.status(404).json({ error: "Media is unavailable." });
-  const file = resolve(root, rel); if (!file.startsWith(root) || !existsSync(file)) return res.status(404).json({ error: "Media is unavailable." }); streamFile(file, req, res);
+  const file = resolve(mediaRoot, rel); if (!file.startsWith(`${mediaRoot}/`) || !existsSync(file)) return res.status(404).json({ error: "Media is unavailable." }); streamFile(file, req, res);
 } catch (error) { next(error); } }
-app.get("/api/media/course/:mediaId", streamMedia); app.get("/api/media/solution/:mediaId", (req, res, next) => { try { const subject = req.query.subject === "verbal" ? "GRE Verbal" : "GRE Quant"; const file = join(root, subject, "questions", "solutions", `${req.params.mediaId}.mp4`); if (!existsSync(file)) return res.status(404).json({ error: "Solution video is unavailable." }); streamFile(file, req, res); } catch (error) { next(error); } });
+app.get("/api/media/course/:mediaId", streamMedia); app.get("/api/media/solution/:mediaId", (req, res, next) => { try { const mediaId = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(req.params.mediaId); const subject = req.query.subject === "verbal" ? "GRE Verbal" : "GRE Quant"; const file = join(mediaRoot, subject, "questions", "solutions", `${mediaId}.mp4`); if (!existsSync(file)) return res.status(404).json({ error: "Solution video is unavailable." }); streamFile(file, req, res); } catch (error) { next(error); } });
 
-app.use((error: any, _req: Request, res: Response, _next: express.NextFunction) => { console.error(error); res.status(error?.name === "ZodError" ? 400 : 500).json({ error: error?.name === "ZodError" ? "Please check the submitted fields." : "Something went wrong." }); });
-const port = Number(process.env.PORT ?? 8787); app.listen(port, () => console.log(`GRE API listening on http://localhost:${port}`));
+app.get("/api/health", (_req, res, next) => { try {
+  db.prepare("SELECT 1").get();
+  for (const subject of ["quant", "verbal"] as Subject[]) { catalog("videos", subject); catalog("questions", subject); }
+  res.json({ status: "ok" });
+} catch (error) { next(error); } });
+
+if (existsSync(webDistPath)) {
+  app.use(express.static(webDistPath, {
+    index: false,
+    maxAge: "1y",
+    immutable: true,
+    setHeaders(res, file) {
+      if (file.endsWith("index.html") || file.endsWith("sw.js") || file.endsWith("manifest.webmanifest")) res.setHeader("Cache-Control", "no-cache");
+    }
+  }));
+  app.get("/{*path}", (req, res, next) => {
+    if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Endpoint not found." });
+    res.sendFile(join(webDistPath, "index.html"), error => error ? next(error) : undefined);
+  });
+}
+
+app.use((error: any, _req: Request, res: Response, _next: express.NextFunction) => { console.error(error); const status = error?.name === "ZodError" ? 400 : error?.code?.startsWith("SQLITE_CONSTRAINT") ? 409 : 500; res.status(status).json({ error: status === 400 ? "Please check the submitted fields." : status === 409 ? "This request conflicts with existing data." : "Something went wrong." }); });
+
+if (isProduction && !existsSync(webDistPath)) throw new Error(`Web build is missing at ${webDistPath}. Run npm run build before starting the API.`);
+const port = Number(process.env.PORT ?? 8787);
+const server = app.listen(port, () => console.log(`GRE Study Desk listening on http://localhost:${port}`));
+let shuttingDown = false;
+function shutdown(signal: string) {
+  if (shuttingDown) return; shuttingDown = true; console.log(`${signal} received; closing server.`);
+  server.close(() => { db.close(); process.exit(0); });
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+process.once("SIGTERM", () => shutdown("SIGTERM")); process.once("SIGINT", () => shutdown("SIGINT"));

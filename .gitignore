@@ -35,4 +35,7 @@ dist-ssr
 .env
 progress.json
 
+# Runtime data must stay local; production uses durable storage outside the image.
+generated/study.sqlite*
+
 .venv/
