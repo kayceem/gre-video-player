@@ -34,3 +34,5 @@ dist-ssr
 *.sw?
 .env
 progress.json
+
+.venv/

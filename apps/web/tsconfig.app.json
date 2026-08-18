@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.base.json","compilerOptions":{"tsBuildInfoFile":"./node_modules/.tmp/tsconfig.app.tsbuildinfo","lib":["ES2022","DOM","DOM.Iterable"],"allowImportingTsExtensions":false,"jsx":"react-jsx","moduleResolution":"bundler","module":"ESNext","noEmit":true},"include":["src"]}
