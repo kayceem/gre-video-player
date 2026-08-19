@@ -39,3 +39,4 @@ progress.json
 generated/study.sqlite*
 
 .venv/
+generated/
