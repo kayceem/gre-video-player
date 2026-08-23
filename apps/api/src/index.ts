@@ -214,7 +214,8 @@ app.use((error: any, _req: Request, res: Response, _next: express.NextFunction) 
 
 if (isProduction && !existsSync(webDistPath)) throw new Error(`Web build is missing at ${webDistPath}. Run npm run build before starting the API.`);
 const port = Number(process.env.PORT ?? 8787);
-const server = app.listen(port, () => console.log(`GRE Study Desk listening on http://localhost:${port}`));
+const host = process.env.HOST ?? "0.0.0.0";
+const server = app.listen(port, () => console.log(`GRE Study Desk listening on http://${host}:${port}`));
 let shuttingDown = false;
 function shutdown(signal: string) {
   if (shuttingDown) return; shuttingDown = true; console.log(`${signal} received; closing server.`);
