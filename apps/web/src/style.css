@@ -50,3 +50,16 @@ body{background:var(--bg)}.app-shell{display:block;min-height:100vh}.site-nav{po
 .lesson-player-page .lesson-navigation-above{margin:0 0 16px;padding:0 0 16px;border-top:0;border-bottom:1px solid var(--border-soft)}@media(max-width:760px){.lesson-player-page .lesson-navigation-above{margin:0 0 14px;padding-bottom:14px}}
 
 .site-nav{background:var(--nav-bg)}.theme-toggle{margin-right:8px}
+
+/* Header controls & Auto toggles */
+.learn-header-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.lesson-header-main{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.auto-toggles{display:inline-flex;align-items:center;gap:3px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:3px}
+.auto-toggle-btn{border:0;background:transparent;padding:6px 12px;border-radius:7px;color:var(--text-body);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s ease}
+.auto-toggle-btn.active{background:var(--accent);color:var(--nav-text)}
+.auto-toggle-btn:hover:not(.active){background:var(--surface-hover);color:var(--text-strong)}
+
+/* Lesson end screen overlay & Fullscreen rules */
+.video-frame:fullscreen{width:100vw!important;height:100vh!important;max-width:none!important;border-radius:0!important;background:#000;display:flex;flex-direction:column;justify-content:center}
+.video-frame:fullscreen div[ref],.video-frame:fullscreen .video-js{width:100%!important;height:100%!important}
+.lesson-end-screen{position:absolute;inset:0;z-index:100;display:grid;place-items:center;background:rgba(0,0,0,.86);backdrop-filter:blur(6px);border-radius:inherit;animation:endScreenFadeIn .35s ease}.end-screen-content{text-align:center;color:#fff;max-width:520px;padding:24px}.end-screen-content h2{font-family:Newsreader,Georgia,serif;font-size:clamp(24px,3vw,36px);font-weight:600;letter-spacing:-.02em;margin:0 0 28px;color:#fff}.end-screen-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}.end-screen-actions button{border:0;border-radius:10px;padding:12px 20px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;cursor:pointer;transition:transform .15s ease,background .15s ease}.end-prev,.end-next{background:rgba(255,255,255,.15);color:#fff}.end-prev:hover:not(:disabled),.end-next:hover:not(:disabled){background:rgba(255,255,255,.25);transform:scale(1.03)}.end-replay{background:var(--accent,#3662e3);color:#fff}.end-replay:hover{background:var(--accent-hover,#2a4fd0);transform:scale(1.03)}.end-screen-actions button:disabled{opacity:.35;cursor:not-allowed}.end-cancel-countdown{border:0;background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;margin-top:14px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}.end-cancel-countdown:hover{background:rgba(255,255,255,.2);color:#fff}.end-screen-hint{margin:18px 0 0;color:rgba(255,255,255,.5);font-size:12px;letter-spacing:.02em}@keyframes endScreenFadeIn{from{opacity:0}to{opacity:1}}@media(max-width:760px){.end-screen-actions{flex-direction:column;gap:10px}.end-screen-actions button{justify-content:center}}
