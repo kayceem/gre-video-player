@@ -2,7 +2,10 @@
   "name": "gre-study-desk",
   "private": true,
   "version": "1.0.0",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently -n api,web -c green,blue \"npm run dev -w @gre/api\" \"npm run dev -w @gre/web\"",
     "build": "npm run import:catalog && npm run build -w @gre/api && npm run build -w @gre/web",
@@ -11,5 +14,15 @@
     "import:catalog:available": "npm run build -w @gre/contracts && tsx scripts/import-catalog.ts --allow-missing-media",
     "test": "vitest run"
   },
-  "devDependencies": {"@types/node": "^22.15.3", "concurrently": "^9.1.2", "tsx": "^4.19.3", "typescript": "^5.8.3", "vitest": "^3.1.2"}
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true,
+    "argon2@0.45.1": true
+  }
 }

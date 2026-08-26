@@ -25,6 +25,29 @@ function sanitizeHtml(raw: unknown): string {
   return html.replace(/\s+(?:class|id)\s*=\s*("[^"]*"|'[^']*')/gi, "").trim();
 }
 
+function extractQuestionImage(rawBody: unknown, imageDir: string): { imageName: string | null; cleanedBody: string } {
+  if (typeof rawBody !== "string") return { imageName: null, cleanedBody: "" };
+  const existingFiles = existsSync(imageDir) ? readdirSync(imageDir) : [];
+  let imageName: string | null = null;
+  const imgRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+  const match = imgRegex.exec(rawBody);
+  if (match) {
+    const rawUrl = match[1];
+    const cleanUrl = rawUrl.split("?")[0];
+    const rawFilename = cleanUrl.substring(cleanUrl.lastIndexOf("/") + 1);
+    if (existingFiles.includes(rawFilename)) {
+      imageName = rawFilename;
+    } else {
+      const found = existingFiles.find(f => f === rawFilename || f.startsWith(`${rawFilename}.`) || f.slice(0, f.lastIndexOf(".")) === rawFilename);
+      if (found) imageName = found;
+    }
+  }
+  let cleanedBody = rawBody.replace(/<center>\s*<p>\s*<img[^>]*\/?>\s*<\/p>\s*<\/center>/gi, "")
+                           .replace(/<p[^>]*>\s*<img[^>]*\/?>\s*<\/p>/gi, "")
+                           .replace(/<img[^>]*\/?>/gi, "");
+  return { imageName, cleanedBody };
+}
+
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap(name => { const full = join(dir, name); return statSync(full).isDirectory() ? walk(full) : [full]; });
 }
@@ -86,8 +109,10 @@ function buildQuestions(subject: Subject): Question[] {
   const name = subject === "quant" ? "quant_question.json" : "verb_question.json";
   const source = JSON.parse(readFileSync(join(root, base, "questions", name), "utf8"));
   const solutionDir = join(root, base, "questions", "solutions");
+  const imageDir = join(root, base, "questions", "images");
   return source.results.filter((record: any) => record.status === "success" && record.data).map((record: any) => {
     const data = record.data;
+    const { imageName, cleanedBody } = extractQuestionImage(data.body, imageDir);
     const groups = (data.choice_groups ?? []).map((group: any, gi: number) => ({
       id: `${id(subject, data.slug)}:g${gi + 1}`, title: String(group.title ?? "Choices"), choices: (group.choices ?? []).map((choice: any, ci: number) => ({
         id: String(choice.id ?? choice.title ?? `${gi}-${ci}`), label: String(choice.title ?? String.fromCharCode(65 + ci)), bodyHtml: sanitizeHtml(choice.body), order: Number(choice.order ?? ci + 1)
@@ -98,10 +123,11 @@ function buildQuestions(subject: Subject): Question[] {
     const correctChoiceIds = data.type === "Quantitative Comparison" ? (answer && "choice" in answer ? [answer.choice] : []) : allChoices.filter((choice: any) => correctLabels.includes(choice.label) || correctLabels.includes(choice.id)).map((choice: any) => choice.id);
     const videoId = vimeoId(data.solution_video?.url ?? data.solution_video?.embed_code);
     const validVideo = videoId && existsSync(join(solutionDir, `${videoId}.mp4`)) ? videoId : null;
+    const category = typeof data.first_tlc === "string" && data.first_tlc.trim() ? data.first_tlc.trim() : (typeof data.first_tlc === "object" && data.first_tlc?.title ? String(data.first_tlc.title).trim() : null);
     return {
-      id: questionId, subject, type: String(data.type ?? "Practice"),
+      id: questionId, subject, type: String(data.type ?? "Practice"), category,
       difficulty: ["Easy", "Medium", "Hard"].includes(data.dynamic_difficulty) ? data.dynamic_difficulty : (["Easy", "Medium", "Hard"].includes(data.difficulty) ? data.difficulty : null),
-      title: String(data.title ?? data.browser_title ?? "Untitled question"), promptHtml: sanitizeHtml(data.body), choiceGroups: groups,
+      title: String(data.title ?? data.browser_title ?? "Untitled question"), promptHtml: sanitizeHtml(cleanedBody), image: imageName, choiceGroups: groups,
       correctChoiceIds, answer, scoring: { requiredCorrect: correctChoiceIds.length, total: correctChoiceIds.length },
       solution: { html: sanitizeHtml(data.solution_video?.body ?? data.solution?.body ?? ""), videoId: validVideo },
       metadata: { source: typeof data.source === "string" && data.source ? data.source : null, acceptanceRate: typeof data.acceptance === "number" ? data.acceptance : null }

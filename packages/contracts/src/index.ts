@@ -26,7 +26,9 @@ export const AnswerSchema = z.union(Object.values(AnswerSchemaByQuestionType) as
 export type Answer = z.infer<typeof AnswerSchema>;
 export const QuestionSchema = z.object({
   id: z.string().regex(/^(quant|verbal):/), subject: SubjectSchema, type: QuestionTypeSchema,
+  category: z.string().nullable(),
   difficulty: z.enum(["Easy", "Medium", "Hard"]).nullable(), title: z.string(), promptHtml: SafeHtmlSchema,
+  image: z.string().nullable(),
   choiceGroups: z.array(ChoiceGroupSchema), correctChoiceIds: z.array(z.string()), answer: AnswerSchema.nullable(),
   scoring: z.object({ requiredCorrect: z.number().int().nonnegative(), total: z.number().int().nonnegative() }),
   solution: z.object({ html: SafeHtmlSchema, videoId: z.string().nullable() }),

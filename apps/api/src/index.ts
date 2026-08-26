@@ -35,7 +35,7 @@ app.disable("x-powered-by");
 app.set("trust proxy", process.env.TRUST_PROXY === "true" || process.env.TRUST_PROXY === "1");
 app.use((req, res, next) => {
   res.set({
-    "Content-Security-Policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'",
+    "Content-Security-Policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self'",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -188,6 +188,7 @@ function streamMedia(req: Request, res: Response, next: express.NextFunction) { 
   const file = resolve(mediaRoot, rel); if (!file.startsWith(`${mediaRoot}/`) || !existsSync(file)) return res.status(404).json({ error: "Media is unavailable." }); streamFile(file, req, res);
 } catch (error) { next(error); } }
 app.get("/api/media/course/:mediaId", streamMedia); app.get("/api/media/solution/:mediaId", (req, res, next) => { try { const mediaId = z.string().regex(/^[a-zA-Z0-9_-]+$/).parse(req.params.mediaId); const subject = req.query.subject === "verbal" ? "GRE Verbal" : "GRE Quant"; const file = join(mediaRoot, subject, "questions", "solutions", `${mediaId}.mp4`); if (!existsSync(file)) return res.status(404).json({ error: "Solution video is unavailable." }); streamFile(file, req, res); } catch (error) { next(error); } });
+app.get("/api/media/question-image/:filename", (req, res, next) => { try { const filename = String(req.params.filename); if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) return res.status(404).json({ error: "Image unavailable." }); const subject = req.query.subject === "verbal" ? "GRE Verbal" : "GRE Quant"; const file = join(mediaRoot, subject, "questions", "images", filename); if (!existsSync(file)) return res.status(404).json({ error: "Image unavailable." }); res.sendFile(file); } catch (error) { next(error); } });
 
 app.get("/api/health", (_req, res, next) => { try {
   db.prepare("SELECT 1").get();
