@@ -141,7 +141,9 @@ function sameAnswer(question: Question, received: any) {
 
 app.get("/api/me/bootstrap", requireUser, (req, res) => {
   const videos = db.prepare("SELECT video_id AS videoId, position_seconds AS positionSeconds, watched, completed, updated_at AS updatedAt FROM video_progress WHERE user_id = ?").all(req.user!.id);
-  const attempts = db.prepare("SELECT question_id AS questionId, correct, score, submitted_at AS submittedAt FROM question_attempts WHERE user_id = ? ORDER BY submitted_at DESC LIMIT 20").all(req.user!.id);
+  // Return one durable status row per question. Limiting raw attempts caused older
+  // completed questions to disappear from the client and show as "New".
+  const attempts = db.prepare("SELECT question_id AS questionId, MAX(correct) AS correct, MAX(score) AS score, MAX(submitted_at) AS submittedAt FROM question_attempts WHERE user_id = ? GROUP BY question_id ORDER BY submittedAt DESC").all(req.user!.id);
   const bookmarks = db.prepare("SELECT question_id AS questionId FROM question_state WHERE user_id = ? AND bookmarked = 1").all(req.user!.id);
   res.json({ videos, attempts, bookmarks });
 });
@@ -155,7 +157,7 @@ app.delete("/api/me/progress/:subject", requireUser, (req, res, next) => { try {
   res.json({ ok: true });
 } catch (error) { next(error); } });
 app.put("/api/me/videos/:videoId/progress", requireUser, (req, res, next) => { try {
-  const input = ProgressSchema.parse(req.body); const videoId = z.string().min(1).parse(req.params.videoId); if (!videoExists(videoId)) return res.status(404).json({ error: "Video is not available." }); db.prepare(`INSERT INTO video_progress (user_id, video_id, position_seconds, watched, completed, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id,video_id) DO UPDATE SET position_seconds=excluded.position_seconds, watched=excluded.watched, completed=excluded.completed, updated_at=excluded.updated_at`).run(req.user!.id, videoId, input.positionSeconds, Number(input.watched), Number(input.completed), now());
+  const input = ProgressSchema.parse(req.body); const videoId = z.string().min(1).parse(req.params.videoId); if (!videoExists(videoId)) return res.status(404).json({ error: "Video is not available." }); db.prepare(`INSERT INTO video_progress (user_id, video_id, position_seconds, watched, completed, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id,video_id) DO UPDATE SET position_seconds=excluded.position_seconds, watched=MAX(video_progress.watched, excluded.watched), completed=MAX(video_progress.completed, excluded.completed), updated_at=excluded.updated_at`).run(req.user!.id, videoId, input.positionSeconds, Number(input.watched), Number(input.completed), now());
   res.json({ ok: true });
 } catch (error) { next(error); } });
 app.post("/api/me/questions/:questionId/attempts", requireUser, (req, res, next) => { try {
