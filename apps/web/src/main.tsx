@@ -219,7 +219,7 @@ const decodeMathEntities = (value: string) => {
 };
 function renderMath(value: string, escapeText = false) {
     const expression =
-        /\$\$([\s\S]+?)\$\$|\\\\\[([\s\S]+?)\\\\\]|\\\\\(([\s\S]+?)\\\\\)|(?<!\\\\)\$((?:\\\\.|[^\\\\$\n])+?)(?<!\\\\)\$/g;
+        /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<!\\)\$((?:\\.|[^\\$\n])+?)(?<!\\)\$/g;
     let output = "",
         cursor = 0,
         match: RegExpExecArray | null;
