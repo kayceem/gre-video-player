@@ -31,6 +31,8 @@ import {
     Sparkles,
     Sun,
     Target,
+    Trash2,
+    Undo2,
     WifiOff,
     X,
 } from "lucide-react";
@@ -44,6 +46,10 @@ import "katex/dist/katex.min.css";
 import "video.js/dist/video-js.css";
 import "./style.css";
 import { Memorize } from "./Memorize";
+import {
+    ReactSketchCanvas,
+    type ReactSketchCanvasRef,
+} from "react-sketch-canvas";
 
 type Catalogs = {
     questions: Record<Subject, Question[]>;
@@ -463,6 +469,125 @@ function UpdateToast({
     );
 }
 
+function ScratchPad({
+    open,
+    onClose,
+}: {
+    open: boolean;
+    onClose: () => void;
+}) {
+    const canvasRef = useRef<ReactSketchCanvasRef>(null);
+    const backdropRef = useRef<HTMLDivElement>(null);
+    const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        const previousOverflow = document.body.style.overflow;
+        const backgroundElements = backdropRef.current?.parentElement
+            ? Array.from(backdropRef.current.parentElement.children).filter(
+                  (element) => element !== backdropRef.current
+              )
+            : [];
+        const previousInert = backgroundElements.map((element) => ({
+            element,
+            inert: (element as HTMLElement & { inert?: boolean }).inert ?? false,
+        }));
+        document.body.style.overflow = "hidden";
+        backgroundElements.forEach((element) => {
+            (element as HTMLElement & { inert: boolean }).inert = true;
+        });
+        closeButtonRef.current?.focus();
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            previousInert.forEach(({ element, inert }) => {
+                (element as HTMLElement & { inert: boolean }).inert = inert;
+            });
+        };
+    }, [open]);
+
+    useEffect(() => {
+        if (!open) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            const key = event.key.toLowerCase();
+            if (key === "c") {
+                event.preventDefault();
+                canvasRef.current?.clearCanvas();
+            } else if (key === "z") {
+                event.preventDefault();
+                canvasRef.current?.undo();
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [open]);
+
+    return (
+        <div
+            ref={backdropRef}
+            className={`scratch-pad-backdrop ${open ? "is-open" : ""}`}
+            role={open ? "dialog" : undefined}
+            aria-modal={open ? "true" : undefined}
+            aria-hidden={!open}
+            aria-label="Scratch pad"
+        >
+            <ReactSketchCanvas
+                ref={canvasRef}
+                className="scratch-pad-canvas"
+                width="100%"
+                height="100%"
+                strokeColor="#ef4444"
+                strokeWidth={4}
+                canvasColor="transparent"
+                style={{
+                    position: "absolute",
+                    inset: 0,
+                    zIndex: 1,
+                }}
+                svgStyle={{
+                    width: "100%",
+                    height: "100%",
+                    touchAction: "none",
+                }}
+            />
+            <div className="scratch-pad-toolbar">
+                <div className="scratch-pad-actions">
+                    <button
+                        type="button"
+                        className="scratch-pad-action"
+                        onClick={() => canvasRef.current?.undo()}
+                        title="Undo last stroke (Z)"
+                    >
+                        <Undo2 size={17} />
+                        <span>Undo</span>
+                        <kbd>Z</kbd>
+                    </button>
+                    <button
+                        type="button"
+                        className="scratch-pad-action"
+                        onClick={() => canvasRef.current?.clearCanvas()}
+                        title="Clear scratch pad (C)"
+                    >
+                        <Trash2 size={17} />
+                        <span>Clear</span>
+                        <kbd>C</kbd>
+                    </button>
+                    <button
+                        ref={closeButtonRef}
+                        type="button"
+                        className="scratch-pad-action scratch-pad-close"
+                        onClick={onClose}
+                        title="Close scratch pad (Q)"
+                    >
+                        <X size={17} />
+                        <span>Close</span>
+                        <kbd>Q</kbd>
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function App() {
     const [catalogs, setCatalogs] = useState<Catalogs>(initialCatalogs),
         [boot, setBoot] = useState<Bootstrap>({
@@ -482,7 +607,8 @@ function App() {
         [route, setRoute] = useState(
             location.pathname === "/" ? "dashboard" : location.pathname.slice(1)
         ),
-        [locationVersion, setLocationVersion] = useState(0);
+        [locationVersion, setLocationVersion] = useState(0),
+        [scratchPadOpen, setScratchPadOpen] = useState(false);
     const pwa = usePwa();
     const rememberedRoutes = useRef({ learn: "/learn", practice: "/practice" });
     const rememberCurrentRoute = () => {
@@ -613,6 +739,22 @@ function App() {
         };
         const key = (event: KeyboardEvent) => {
             const target = event.target as HTMLElement;
+            const keyLower = event.key.toLowerCase();
+            const isInteractiveTarget = target?.matches(
+                "input, textarea, select, button, a, video, [contenteditable=true]"
+            );
+            if (scratchPadOpen) {
+                if (keyLower === "q" || event.key === "Escape") {
+                    event.preventDefault();
+                    setScratchPadOpen(false);
+                }
+                return;
+            }
+            if (!pending && keyLower === "q" && !isInteractiveTarget) {
+                event.preventDefault();
+                setScratchPadOpen(true);
+                return;
+            }
             if (
                 route === "learn/video" &&
                 (event.key === "ArrowLeft" || event.key === "ArrowRight")
@@ -758,7 +900,7 @@ function App() {
             }
             if (event.key === "?") {
                 setNotice(
-                    "/ Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · F Fullscreen · M Mute"
+                    "Q Scratch pad · / Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · F Fullscreen · M Mute"
                 );
                 return;
             }
@@ -807,7 +949,7 @@ function App() {
         };
         addEventListener("keydown", key);
         return () => removeEventListener("keydown", key);
-    }, [route]);
+    }, [route, scratchPadOpen]);
     if (loading)
         return (
             <main className="center-state">
@@ -830,6 +972,10 @@ function App() {
         );
     return (
         <div className="app-shell">
+            <ScratchPad
+                open={scratchPadOpen}
+                onClose={() => setScratchPadOpen(false)}
+            />
             <a className="skip-link" href="#main-content">
                 Skip to content
             </a>
