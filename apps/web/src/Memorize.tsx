@@ -136,6 +136,7 @@ export function Memorize() {
 
     const currentAudioRef = useRef<HTMLAudioElement | null>(null);
     const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
+    const touchStartX = useRef<number | null>(null);
 
     // Save show definition toggle
     useEffect(() => {
@@ -198,6 +199,21 @@ export function Memorize() {
             localStorage.setItem(`memorize:last-cat:${source}`, slug);
         } catch {}
     };
+
+    const stepCategory = useCallback(
+        (dir: 1 | -1) => {
+            if (!activeData || !activeData.mountain_categories.length) return;
+            const idx = activeData.mountain_categories.findIndex(
+                (c) => c.slug === selectedCategorySlug
+            );
+            const safeIdx = idx >= 0 ? idx : 0;
+            const nextIdx =
+                (safeIdx + dir + activeData.mountain_categories.length) %
+                activeData.mountain_categories.length;
+            handleCategoryChange(activeData.mountain_categories[nextIdx].slug);
+        },
+        [activeData, selectedCategorySlug]
+    );
 
     const currentCategory = useMemo(() => {
         if (!activeData) return null;
@@ -270,6 +286,31 @@ export function Memorize() {
             setSelectedIndex(displayItems.length - 1);
         }
     }, [displayItems, selectedIndex]);
+
+    const goNextItem = useCallback(() => {
+        setSelectedIndex((prev) => Math.min(displayItems.length - 1, prev + 1));
+    }, [displayItems.length]);
+
+    const goPrevItem = useCallback(() => {
+        setSelectedIndex((prev) => Math.max(0, prev - 1));
+    }, []);
+
+    const handleTouchStart = useCallback((e: React.TouchEvent) => {
+        touchStartX.current = e.touches[0]?.clientX ?? null;
+    }, []);
+
+    const handleTouchEnd = useCallback(
+        (e: React.TouchEvent) => {
+            if (touchStartX.current == null) return;
+            const endX = e.changedTouches[0]?.clientX ?? touchStartX.current;
+            const dx = endX - touchStartX.current;
+            touchStartX.current = null;
+            if (Math.abs(dx) < 48) return;
+            if (dx < 0) goNextItem();
+            else goPrevItem();
+        },
+        [goNextItem, goPrevItem]
+    );
 
     const currentItem = displayItems[selectedIndex] || null;
 
@@ -521,7 +562,11 @@ export function Memorize() {
                     </div>
 
                     {/* Main Detail Content Sheet */}
-                    <div className="detail-content-sheet">
+                    <div
+                        className="detail-content-sheet"
+                        onTouchStart={handleTouchStart}
+                        onTouchEnd={handleTouchEnd}
+                    >
                         <div className="detail-header-row">
                             <div className="detail-title-group">
                                 <h1>{currentItem.title}</h1>
@@ -553,7 +598,7 @@ export function Memorize() {
                                 onClick={() => handleSetStatus(currentItem, "G")}
                             >
                                 <Check size={18} />
-                                <span>Known (G)</span>
+                                <span>Known</span>
                             </button>
                             <button
                                 className={`detail-status-btn forgot ${
@@ -562,14 +607,14 @@ export function Memorize() {
                                 onClick={() => handleSetStatus(currentItem, "R")}
                             >
                                 <X size={18} />
-                                <span>Forgot (F)</span>
+                                <span>Forgot</span>
                             </button>
                             <button
                                 className="detail-status-btn reset"
                                 onClick={() => handleSetStatus(currentItem, null)}
                             >
                                 <RotateCcw size={18} />
-                                <span>Reset (W)</span>
+                                <span>Reset</span>
                             </button>
                         </div>
 
@@ -584,13 +629,36 @@ export function Memorize() {
                                     <EyeOff size={36} />
                                     <p>Definition hidden</p>
                                     <button
-                                        className="memorize-btn primary"
+                                        className="memorize-btn primary reveal-btn"
                                         onClick={toggleRevealCurrentItem}
                                     >
-                                        Press <strong>D</strong> to Reveal Definition
+                                        Tap to Reveal Definition
                                     </button>
                                 </div>
                             )}
+                        </div>
+
+                        {/* Mobile-friendly Prev / Next footer (thumb reach) */}
+                        <div className="detail-bottom-nav">
+                            <button
+                                className="detail-bottom-btn"
+                                disabled={selectedIndex <= 0}
+                                onClick={goPrevItem}
+                            >
+                                <ChevronLeft size={20} />
+                                <span>Prev</span>
+                            </button>
+                            <span className="detail-bottom-count">
+                                {selectedIndex + 1} / {displayItems.length}
+                            </span>
+                            <button
+                                className="detail-bottom-btn"
+                                disabled={selectedIndex >= displayItems.length - 1}
+                                onClick={goNextItem}
+                            >
+                                <span>Next</span>
+                                <ChevronRight size={20} />
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -604,19 +672,37 @@ export function Memorize() {
                         {/* Group / Category Dropdown */}
                         <div className="memorize-group-picker">
                             <label htmlFor="group-select">Group:</label>
-                            <div className="select-wrapper">
-                                <select
-                                    id="group-select"
-                                    value={currentCategory.slug}
-                                    onChange={(e) => handleCategoryChange(e.target.value)}
+                            <div className="group-nav-row">
+                                <button
+                                    className="group-step-btn"
+                                    onClick={() => stepCategory(-1)}
+                                    title="Previous group"
+                                    aria-label="Previous group"
                                 >
-                                    {activeData.mountain_categories.map((cat, idx) => (
-                                        <option key={cat.slug} value={cat.slug}>
-                                            {cat.title || `Group ${idx + 1}`} ({cat.mountain_contents.length} items)
-                                        </option>
-                                    ))}
-                                </select>
-                                <ChevronDown size={16} className="select-icon" />
+                                    <ChevronLeft size={18} />
+                                </button>
+                                <div className="select-wrapper">
+                                    <select
+                                        id="group-select"
+                                        value={currentCategory.slug}
+                                        onChange={(e) => handleCategoryChange(e.target.value)}
+                                    >
+                                        {activeData.mountain_categories.map((cat, idx) => (
+                                            <option key={cat.slug} value={cat.slug}>
+                                                {cat.title || `Group ${idx + 1}`} ({cat.mountain_contents.length} items)
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown size={16} className="select-icon" />
+                                </div>
+                                <button
+                                    className="group-step-btn"
+                                    onClick={() => stepCategory(1)}
+                                    title="Next group"
+                                    aria-label="Next group"
+                                >
+                                    <ChevronRight size={18} />
+                                </button>
                             </div>
                         </div>
 

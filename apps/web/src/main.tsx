@@ -18,6 +18,7 @@ import {
     Command,
     Gauge,
     LogOut,
+    Menu,
     Monitor,
     Moon,
     Pause,
@@ -725,14 +726,42 @@ function Nav({
         { id: "practice", label: "Practice" },
         { id: "memorize", label: "Memorize" },
     ];
+    const [mobileOpen, setMobileOpen] = useState(false);
+    const [memorizeOpen, setMemorizeOpen] = useState(false);
+    useEffect(() => {
+        setMobileOpen(false);
+        setMemorizeOpen(false);
+    }, [route]);
+    // Lock body scroll when fullscreen mobile menu is open
+    useEffect(() => {
+        if (!mobileOpen) return;
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = prev;
+        };
+    }, [mobileOpen]);
+    const handleGo = (destination: string) => {
+        setMobileOpen(false);
+        setMemorizeOpen(false);
+        go(destination);
+    };
     return (
-        <header className="site-nav">
-            <div className="nav-inner">
-                <button className="brand" onClick={() => go("dashboard")}>
+        <header className={`site-nav ${mobileOpen ? "menu-open" : ""}`}>
+            <div className={`nav-inner ${mobileOpen ? "nav-open" : ""}`}>
+                <button className="brand" onClick={() => handleGo("dashboard")}>
                     <span className="brand-mark">G</span>
                     <span>
                         GrePrep <b>GRE</b>
                     </span>
+                </button>
+                <button
+                    className="nav-hamburger"
+                    onClick={() => setMobileOpen((v) => !v)}
+                    aria-label={mobileOpen ? "Close menu" : "Open menu"}
+                    aria-expanded={mobileOpen}
+                >
+                    {mobileOpen ? <X size={22} /> : <Menu size={22} />}
                 </button>
                 <nav className="nav-links" aria-label="Primary navigation">
                     {links.map((link) => {
@@ -743,15 +772,51 @@ function Nav({
 
                         if (link.id === "memorize") {
                             return (
-                                <div key={link.id} className="nav-dropdown-wrapper">
+                                <div
+                                    key={link.id}
+                                    className={`nav-dropdown-wrapper ${
+                                        memorizeOpen ? "open" : ""
+                                    }`}
+                                >
                                     <button
                                         className={`nav-dropdown-btn ${isActive ? "active" : ""}`}
-                                        onClick={() => go("memorize")}
+                                        onClick={() => {
+                                            if (
+                                                window.matchMedia(
+                                                    "(max-width: 760px)"
+                                                ).matches
+                                            ) {
+                                                setMemorizeOpen((v) => !v);
+                                            } else {
+                                                handleGo("memorize");
+                                            }
+                                        }}
+                                        aria-expanded={memorizeOpen}
+                                        aria-haspopup="true"
                                     >
-                                        <span>{link.label}</span>
-                                        <ChevronDown size={14} className="dropdown-arrow" />
+                                        <span
+                                            onClick={(e) => {
+                                                if (
+                                                    window.matchMedia(
+                                                        "(max-width: 760px)"
+                                                    ).matches
+                                                ) {
+                                                    e.stopPropagation();
+                                                    handleGo("memorize");
+                                                }
+                                            }}
+                                        >
+                                            {link.label}
+                                        </span>
                                     </button>
                                     <div className="nav-dropdown-menu">
+                                        <button
+                                            className="nav-sub-back"
+                                            onClick={() => setMemorizeOpen(false)}
+                                            aria-label="Back to menu"
+                                        >
+                                            <ChevronLeft size={16} /> Back
+                                        </button>
                                         <button
                                             className={
                                                 route.startsWith("memorize") &&
@@ -760,7 +825,7 @@ function Nav({
                                                     : ""
                                             }
                                             onClick={() => {
-                                                go("memorize");
+                                                handleGo("memorize");
                                                 setParams({ source: "verbal" });
                                             }}
                                         >
@@ -774,7 +839,7 @@ function Nav({
                                                     : ""
                                             }
                                             onClick={() => {
-                                                go("memorize");
+                                                handleGo("memorize");
                                                 setParams({ source: "quant" });
                                             }}
                                         >
@@ -788,7 +853,7 @@ function Nav({
                                                     : ""
                                             }
                                             onClick={() => {
-                                                go("memorize");
+                                                handleGo("memorize");
                                                 setParams({ source: "quant-overwhelmed" });
                                             }}
                                         >
@@ -803,13 +868,14 @@ function Nav({
                             <button
                                 key={link.id}
                                 className={isActive ? "active" : ""}
-                                onClick={() => go(link.id)}
+                                onClick={() => handleGo(link.id)}
                             >
                                 {link.label}
                             </button>
                         );
                     })}
                 </nav>
+                <div className="nav-util">
                 <button
                     className="nav-account theme-toggle"
                     onClick={() => onTheme(nextTheme(theme))}
@@ -836,11 +902,12 @@ function Nav({
                     className={`nav-account ${
                         route === "account" ? "active" : ""
                     }`}
-                    onClick={() => go("account")}
+                    onClick={() => handleGo("account")}
                 >
                     <CircleUserRound size={18} />
                     <span>Account</span>
                 </button>
+                </div>
             </div>
         </header>
     );
