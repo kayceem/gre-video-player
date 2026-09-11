@@ -38,6 +38,7 @@ import type {
 import "katex/dist/katex.min.css";
 import "video.js/dist/video-js.css";
 import "./style.css";
+import { Memorize } from "./Memorize";
 
 type Catalogs = {
     questions: Record<Subject, Question[]>;
@@ -217,7 +218,7 @@ const decodeMathEntities = (value: string) => {
     decoder.innerHTML = value;
     return decoder.value;
 };
-function renderMath(value: string, escapeText = false) {
+export function renderMath(value: string, escapeText = false) {
     const expression =
         /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<!\\)\$((?:\\.|[^\\$\n])+?)(?<!\\)\$/g;
     let output = "",
@@ -241,7 +242,7 @@ function renderMath(value: string, escapeText = false) {
         : value.slice(cursor);
     return output;
 }
-function Html({ value }: { value: string }) {
+export function Html({ value }: { value: string }) {
     return (
         <div
             className="rich-text"
@@ -691,6 +692,8 @@ function App() {
                         mutate={mutate}
                         onBoot={setBoot}
                     />
+                ) : route === "memorize" ? (
+                    <Memorize />
                 ) : route === "account" ? (
                     <Account user={user} onUser={setUser} onBoot={setBoot} />
                 ) : (
@@ -720,6 +723,7 @@ function Nav({
         { id: "dashboard", label: "Overview" },
         { id: "learn", label: "Learn" },
         { id: "practice", label: "Practice" },
+        { id: "memorize", label: "Memorize" },
     ];
     return (
         <header className="site-nav">
