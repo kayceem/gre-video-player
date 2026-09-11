@@ -71,8 +71,11 @@ app.use((req, res, next) => {
         return next();
     const origin = req.get("origin");
     if (!origin) return next();
-    const expectedOrigin = process.env.ALLOWED_ORIGIN;
-    if (!expectedOrigin || origin !== expectedOrigin)
+    const allowedOrigins = (process.env.ALLOWED_ORIGIN ?? "")
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean);
+    if (!allowedOrigins.includes(origin))
         return res
             .status(403)
             .json({ error: "Request origin is not allowed." });

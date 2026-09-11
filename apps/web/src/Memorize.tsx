@@ -115,12 +115,13 @@ export function Memorize() {
     // View Mode: "list" (single column layout) or "detail" (full definition page)
     const [viewMode, setViewMode] = useState<"list" | "detail">("list");
 
-    // Controls & Toggles
+    // Controls & Toggles (definition shown by default)
     const [showDefinition, setShowDefinition] = useState<boolean>(() => {
         try {
-            return localStorage.getItem("memorize:show-def") === "true";
+            const stored = localStorage.getItem("memorize:show-def");
+            return stored === null ? true : stored === "true";
         } catch {
-            return false;
+            return true;
         }
     });
     const [sortOption, setSortOption] = useState<SortOption>("default");

@@ -811,13 +811,6 @@ function Nav({
                                     </button>
                                     <div className="nav-dropdown-menu">
                                         <button
-                                            className="nav-sub-back"
-                                            onClick={() => setMemorizeOpen(false)}
-                                            aria-label="Back to menu"
-                                        >
-                                            <ChevronLeft size={16} /> Back
-                                        </button>
-                                        <button
                                             className={
                                                 route.startsWith("memorize") &&
                                                 getParam("source", "verbal") === "verbal"
