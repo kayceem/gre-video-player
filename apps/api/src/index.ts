@@ -37,10 +37,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, appli
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), expires_at TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS video_progress (user_id TEXT NOT NULL, video_id TEXT NOT NULL, position_seconds REAL NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,video_id));
+CREATE TABLE IF NOT EXISTS memorize_progress (user_id TEXT NOT NULL, source TEXT NOT NULL, group_slug TEXT NOT NULL, item_slug TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('G','R')), updated_at TEXT NOT NULL, PRIMARY KEY(user_id,source,group_slug,item_slug));
 CREATE TABLE IF NOT EXISTS question_attempts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, question_id TEXT NOT NULL, selected_choice_ids TEXT NOT NULL, correct INTEGER NOT NULL, score REAL NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, submitted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS question_state (user_id TEXT NOT NULL, question_id TEXT NOT NULL, bookmarked INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,question_id));
 CREATE INDEX IF NOT EXISTS sessions_active_user_idx ON sessions (user_id, expires_at);
 CREATE INDEX IF NOT EXISTS video_progress_user_idx ON video_progress (user_id, updated_at);
+CREATE INDEX IF NOT EXISTS memorize_progress_user_idx ON memorize_progress (user_id, updated_at);
 CREATE INDEX IF NOT EXISTS question_attempts_user_idx ON question_attempts (user_id, submitted_at);
 `);
 
@@ -419,7 +421,12 @@ app.get("/api/me/bootstrap", requireUser, (req, res) => {
             "SELECT question_id AS questionId FROM question_state WHERE user_id = ? AND bookmarked = 1"
         )
         .all(req.user!.id);
-    res.json({ videos, attempts, bookmarks });
+    const memorizeProgress = db
+        .prepare(
+            "SELECT source, group_slug AS groupSlug, item_slug AS itemSlug, status, updated_at AS updatedAt FROM memorize_progress WHERE user_id = ?"
+        )
+        .all(req.user!.id);
+    res.json({ videos, attempts, bookmarks, memorizeProgress });
 });
 app.delete("/api/me/progress/:subject", requireUser, (req, res, next) => {
     try {
@@ -435,7 +442,47 @@ app.delete("/api/me/progress/:subject", requireUser, (req, res, next) => {
             db.prepare(
                 "DELETE FROM question_state WHERE user_id = ? AND question_id LIKE ?"
             ).run(req.user!.id, prefix);
+            const sources = subject === "quant" ? ["quant", "quant-overwhelmed"] : ["verbal"];
+            db.prepare(
+                `DELETE FROM memorize_progress WHERE user_id = ? AND source IN (${sources.map(() => "?").join(",")})`
+            ).run(req.user!.id, ...sources);
         })();
+        res.json({ ok: true });
+    } catch (error) {
+        next(error);
+    }
+});
+app.put("/api/me/memorize-progress", requireUser, (req, res, next) => {
+    try {
+        const input = z
+            .object({
+                source: z.enum(["verbal", "quant", "quant-overwhelmed"]),
+                groupSlug: z.string().trim().min(1).max(200),
+                itemSlug: z.string().trim().min(1).max(200),
+                status: z.enum(["G", "R"]).nullable(),
+            })
+            .parse(req.body);
+        if (input.status === null) {
+            db.prepare(
+                "DELETE FROM memorize_progress WHERE user_id = ? AND source = ? AND group_slug = ? AND item_slug = ?"
+            ).run(
+                req.user!.id,
+                input.source,
+                input.groupSlug,
+                input.itemSlug
+            );
+        } else {
+            db.prepare(
+                `INSERT INTO memorize_progress (user_id, source, group_slug, item_slug, status, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id,source,group_slug,item_slug) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at`
+            ).run(
+                req.user!.id,
+                input.source,
+                input.groupSlug,
+                input.itemSlug,
+                input.status,
+                now()
+            );
+        }
         res.json({ ok: true });
     } catch (error) {
         next(error);

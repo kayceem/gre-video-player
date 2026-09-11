@@ -10,6 +10,7 @@ import {
     Filter,
     RotateCcw,
     Shuffle,
+    SlidersHorizontal,
     SortAsc,
     Volume2,
     X,
@@ -91,7 +92,30 @@ function setStoredStatus(
     } catch {}
 }
 
-export function Memorize() {
+type SyncedMemorizeProgress = {
+    source: MountainSource;
+    groupSlug: string;
+    itemSlug: string;
+    status: Exclude<ItemStatus, null>;
+};
+type MemorizeProps = {
+    user: { id: string } | null;
+    progress: SyncedMemorizeProgress[];
+    mutate: (url: string, method: string, body: unknown) => void;
+    onProgress: (progress: SyncedMemorizeProgress[]) => void;
+};
+const progressKey = (
+    source: MountainSource,
+    groupSlug: string,
+    itemSlug: string
+) => `${source}:${groupSlug}:${itemSlug}`;
+
+export function Memorize({
+    user,
+    progress,
+    mutate,
+    onProgress,
+}: MemorizeProps) {
     const [source, setSource] = useState<MountainSource>(getUrlSource);
 
     // Sync source state when URL query params change (e.g. from navbar selector)
@@ -128,6 +152,7 @@ export function Memorize() {
     const [filterOption, setFilterOption] = useState<FilterOption>("all");
     const [isShuffled, setIsShuffled] = useState<boolean>(false);
     const [shuffleSeed, setShuffleSeed] = useState<number>(0);
+    const [filtersOpen, setFiltersOpen] = useState(false);
 
     // Explicitly revealed items in current session (when D is pressed)
     const [revealedItems, setRevealedItems] = useState<Set<string>>(new Set());
@@ -138,6 +163,16 @@ export function Memorize() {
     const currentAudioRef = useRef<HTMLAudioElement | null>(null);
     const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
     const touchStartX = useRef<number | null>(null);
+    const syncedLocalKeys = useRef(new Set<string>());
+    const hasActiveFilters =
+        filterOption !== "all" || sortOption !== "default" || isShuffled;
+
+    useEffect(() => {
+        if (hasActiveFilters) setFiltersOpen(true);
+    }, [hasActiveFilters]);
+    useEffect(() => {
+        syncedLocalKeys.current.clear();
+    }, [user?.id]);
 
     // Save show definition toggle
     useEffect(() => {
@@ -225,20 +260,59 @@ export function Memorize() {
         );
     }, [activeData, selectedCategorySlug]);
 
-    // Load statuses for current category
+    // Load local/server statuses for the current category. Server progress wins
+    // when both copies exist; local-only progress is adopted into the account.
     useEffect(() => {
         if (!currentCategory) return;
+        const remoteByKey = new Map(
+            progress.map((item) => [
+                progressKey(item.source, item.groupSlug, item.itemSlug),
+                item,
+            ])
+        );
         const newStatuses: Record<string, ItemStatus> = {};
+        const localProgressToSync: SyncedMemorizeProgress[] = [];
+        const mergedProgress = [...progress];
+        const mergedKeys = new Set(progress.map((item) =>
+            progressKey(item.source, item.groupSlug, item.itemSlug)
+        ));
         for (const item of currentCategory.mountain_contents) {
-            newStatuses[item.slug] = getStoredStatus(
-                source,
-                currentCategory.slug,
-                item.slug
-            );
+            const key = progressKey(source, currentCategory.slug, item.slug);
+            const remote = remoteByKey.get(key);
+            const local = getStoredStatus(source, currentCategory.slug, item.slug);
+            if (user && remote) {
+                newStatuses[item.slug] = remote.status;
+                setStoredStatus(source, currentCategory.slug, item.slug, remote.status);
+            } else {
+                newStatuses[item.slug] = local ?? remote?.status ?? null;
+                if (!local && remote) {
+                    setStoredStatus(source, currentCategory.slug, item.slug, remote.status);
+                }
+                if (user && local && !remote && !syncedLocalKeys.current.has(key)) {
+                    const record: SyncedMemorizeProgress = {
+                        source,
+                        groupSlug: currentCategory.slug,
+                        itemSlug: item.slug,
+                        status: local,
+                    };
+                    syncedLocalKeys.current.add(key);
+                    localProgressToSync.push(record);
+                    if (!mergedKeys.has(key)) {
+                        mergedKeys.add(key);
+                        mergedProgress.push(record);
+                    }
+                }
+            }
         }
         setStatuses(newStatuses);
         setSelectedIndex(0);
-    }, [source, currentCategory]);
+        if (localProgressToSync.length) {
+            onProgress(mergedProgress);
+            localProgressToSync.forEach((record) =>
+                mutate("/api/me/memorize-progress", "PUT", record)
+            );
+        }
+    }, [source, currentCategory, progress, user, mutate, onProgress]);
 
     // Prepare display items according to filter, shuffle & sort options
     const displayItems = useMemo(() => {
@@ -331,8 +405,32 @@ export function Memorize() {
             if (!currentCategory) return;
             setStoredStatus(source, currentCategory.slug, item.slug, status);
             setStatuses((prev) => ({ ...prev, [item.slug]: status }));
+            if (user) {
+                const key = progressKey(source, currentCategory.slug, item.slug);
+                const nextProgress = progress.filter(
+                    (entry) =>
+                        progressKey(entry.source, entry.groupSlug, entry.itemSlug) !==
+                        key
+                );
+                const record = status
+                    ? {
+                          source,
+                          groupSlug: currentCategory.slug,
+                          itemSlug: item.slug,
+                          status,
+                      }
+                    : null;
+                if (record) nextProgress.push(record);
+                onProgress(nextProgress);
+                mutate("/api/me/memorize-progress", "PUT", {
+                    source,
+                    groupSlug: currentCategory.slug,
+                    itemSlug: item.slug,
+                    status,
+                });
+            }
         },
-        [source, currentCategory]
+        [source, currentCategory, user, progress, mutate, onProgress]
     );
 
     // Audio / Speech output using backend audio proxy (with Origin: gregmat.com header)
@@ -707,8 +805,26 @@ export function Memorize() {
                             </div>
                         </div>
 
+                        <button
+                            type="button"
+                            className={`mobile-filter-toggle memorize-mobile-filter-toggle ${
+                                hasActiveFilters ? "has-active" : ""
+                            }`}
+                            onClick={() => setFiltersOpen((open) => !open)}
+                            aria-expanded={filtersOpen}
+                            aria-controls="memorize-actions"
+                        >
+                            <SlidersHorizontal size={18} />
+                            Filters & order{hasActiveFilters ? " (active)" : ""}
+                        </button>
+
                         {/* Actions Toolbar */}
-                        <div className="memorize-actions">
+                        <div
+                            id="memorize-actions"
+                            className={`memorize-actions ${
+                                filtersOpen ? "is-open" : ""
+                            }`}
+                        >
                             {/* Filter Selector */}
                             <div className="memorize-sort-picker">
                                 <Filter size={15} className="sort-icon" />
@@ -807,7 +923,13 @@ export function Memorize() {
                     {displayItems.length === 0 ? (
                         <div className="memorize-empty-filter">
                             <p>No items match the selected filter (<strong>{filterOption}</strong>).</p>
-                            <button className="memorize-btn primary" onClick={() => setFilterOption("all")}>
+                            <button
+                                className="memorize-btn primary"
+                                onClick={() => {
+                                    setFilterOption("all");
+                                    setFiltersOpen(false);
+                                }}
+                            >
                                 Reset Filter to Show All
                             </button>
                         </div>

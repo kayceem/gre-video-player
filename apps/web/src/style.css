@@ -4058,6 +4058,9 @@ body {
         font-size: 13px;
         padding: 8px 12px;
     }
+    .detail-nav-arrows {
+        display: none;
+    }
     .nav-arrow-btn {
         width: 44px;
         height: 40px;
@@ -5059,6 +5062,7 @@ a > svg.lucide {
 .lesson-end-screen {
     overflow: auto;
     padding: 12px;
+    overscroll-behavior: contain;
 }
 .end-screen-content {
     width: min(100%, 520px);
@@ -5109,14 +5113,28 @@ a > svg.lucide {
     .problem-controls.is-open {
         margin-top: 10px;
     }
+    .memorize-mobile-filter-toggle {
+        margin-top: 0;
+    }
+    .memorize-actions:not(.is-open) {
+        display: none;
+    }
+    .memorize-actions.is-open {
+        display: grid;
+    }
     .end-screen-content {
-        padding: 12px 4px;
+        width: 100%;
+        max-width: 420px;
+        min-height: 100%;
+        padding: 12px 0;
     }
     .end-screen-content h2 {
         font-size: clamp(21px, 7vw, 30px);
         margin-bottom: 14px;
     }
     .end-screen-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
         width: 100%;
         gap: 7px;
     }

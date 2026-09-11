@@ -63,6 +63,13 @@ type Bootstrap = {
         submittedAt: string;
     }>;
     bookmarks: Array<{ questionId: string }>;
+    memorizeProgress: Array<{
+        source: "verbal" | "quant" | "quant-overwhelmed";
+        groupSlug: string;
+        itemSlug: string;
+        status: "G" | "R";
+        updatedAt?: string;
+    }>;
 };
 const initialCatalogs: Catalogs = {
     questions: { quant: [], verbal: [] },
@@ -462,6 +469,7 @@ function App() {
             videos: [],
             attempts: [],
             bookmarks: [],
+            memorizeProgress: [],
         }),
         [user, setUser] = useState<{ id: string; username: string } | null>(
             null
@@ -561,7 +569,7 @@ function App() {
         setRoute(target === "/" ? "dashboard" : target.split("?")[0].slice(1));
         setLocationVersion((version) => version + 1);
     };
-    const mutate = async (url: string, method: string, body: unknown) => {
+    const mutate = useCallback(async (url: string, method: string, body: unknown) => {
         try {
             await api(url, { method, body: JSON.stringify(body) });
         } catch (error) {
@@ -575,12 +583,22 @@ function App() {
             }
             try {
                 await queueMutation({ url, method, body });
-                setNotice("Saved on this device. It will sync when you reconnect.");
+                setNotice(
+                    navigator.onLine
+                        ? "Saved on this device. It will sync when the server is reachable."
+                        : "Saved on this device. It will sync when you reconnect."
+                );
             } catch {
                 setNotice("Unable to save progress right now. Please try again.");
             }
         }
-    };
+    }, []);
+    const handleMemorizeProgress = useCallback(
+        (memorizeProgress: Bootstrap["memorizeProgress"]) => {
+            setBoot((current) => ({ ...current, memorizeProgress }));
+        },
+        []
+    );
     const allVideos = useMemo(
         () =>
             Object.values(catalogs.videos).flatMap((v) =>
@@ -888,7 +906,12 @@ function App() {
                         onBoot={setBoot}
                     />
                 ) : route === "memorize" ? (
-                    <Memorize />
+                    <Memorize
+                        user={user}
+                        progress={boot.memorizeProgress ?? []}
+                        mutate={mutate}
+                        onProgress={handleMemorizeProgress}
+                    />
                 ) : route === "account" ? (
                     <Account
                         user={user}
@@ -1418,6 +1441,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                 player.on("loadedmetadata", () => {
                     const current = media();
                     if (current) {
+                        setLoading(false);
                         videoRef.current = current;
                         current.setAttribute("playsinline", "true");
                         current.setAttribute("webkit-playsinline", "true");
@@ -1429,6 +1453,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                     }
                 });
 
+                player.on("loadeddata", () => setLoading(false));
                 player.on("canplay", () => setLoading(false));
                 player.on("waiting", () => setLoading(true));
                 player.on("playing", () => setLoading(false));
@@ -2668,7 +2693,25 @@ function Practice({
                 bookmarks: boot.bookmarks.filter(
                     (item) => !item.questionId.startsWith(`${subject}:`)
                 ),
+                memorizeProgress: boot.memorizeProgress.filter(
+                    (item) =>
+                        subject === "quant"
+                            ? item.source !== "quant" &&
+                              item.source !== "quant-overwhelmed"
+                            : item.source !== "verbal"
+                ),
             });
+            try {
+                const prefixes =
+                    subject === "quant"
+                        ? ["memorize:quant:", "memorize:quant-overwhelmed:"]
+                        : ["memorize:verbal:"];
+                Object.keys(localStorage).forEach((key) => {
+                    if (prefixes.some((prefix) => key.startsWith(prefix))) {
+                        localStorage.removeItem(key);
+                    }
+                });
+            } catch {}
             setResetMessage(
                 `${subject === "quant" ? "Quant" : "Verbal"} progress reset.`
             );
