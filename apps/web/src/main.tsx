@@ -16,7 +16,6 @@ import {
     ChevronLeft,
     ChevronRight,
     CircleUserRound,
-    Command,
     Download,
     Gauge,
     House,
@@ -28,6 +27,7 @@ import {
     RefreshCw,
     Search,
     SkipForward,
+    SlidersHorizontal,
     Sparkles,
     Sun,
     Target,
@@ -71,6 +71,12 @@ const initialCatalogs: Catalogs = {
         verbal: { subject: "verbal", title: "GRE Verbal", categories: [] },
     },
 };
+class ApiRequestError extends Error {
+    constructor(message: string, readonly status: number) {
+        super(message);
+        this.name = "ApiRequestError";
+    }
+}
 const api = async (url: string, options?: RequestInit) => {
     const response = await fetch(url, {
         credentials: "include",
@@ -80,10 +86,13 @@ const api = async (url: string, options?: RequestInit) => {
         },
         ...options,
     });
-    if (!response.ok)
-        throw new Error(
-            (await response.json().catch(() => null))?.error ?? "Request failed"
+    if (!response.ok) {
+        throw new ApiRequestError(
+            (await response.json().catch(() => null))?.error ??
+                "Request failed",
+            response.status
         );
+    }
     return response.status === 204 ? null : response.json();
 };
 const getParam = (key: string, fallback: string) =>
@@ -108,8 +117,6 @@ const readTheme = (): Theme => {
         return "auto";
     }
 };
-const nextTheme = (theme: Theme): Theme =>
-    theme === "auto" ? "light" : theme === "light" ? "dark" : "auto";
 document.documentElement.setAttribute("data-theme", readTheme());
 
 function openStore(name: string) {
@@ -152,7 +159,7 @@ async function queueMutation(mutation: {
         const r = db
             .transaction("mutations", "readwrite")
             .objectStore("mutations")
-            .put({ id: crypto.randomUUID(), ...mutation });
+            .put({ id: newIdempotencyKey(), ...mutation });
         r.onsuccess = () => resolve();
         r.onerror = () => reject(r.error);
     });
@@ -288,6 +295,14 @@ const storeBool = (key: string, value: boolean) => {
         localStorage.setItem(key, String(value));
     } catch {}
 };
+const newIdempotencyKey = () => {
+    if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    const hex = (length: number) =>
+        Array.from({ length }, () =>
+            Math.floor(Math.random() * 16).toString(16)
+        ).join("");
+    return `${hex(8)}-${hex(4)}-4${hex(3)}-8${hex(3)}-${hex(12)}`;
+};
 
 type BeforeInstallPromptEvent = Event & {
     prompt: () => Promise<void>;
@@ -368,13 +383,6 @@ function usePwa() {
         });
         setUpdateReady(false);
     }, []);
-    const isIos = useMemo(() => {
-        if (typeof navigator === "undefined") return false;
-        return (
-            /iphone|ipad|ipod/i.test(navigator.userAgent) &&
-            !(window as any).MSStream
-        );
-    }, []);
     const isStandalone = useMemo(() => {
         try {
             return (
@@ -385,8 +393,6 @@ function usePwa() {
             return false;
         }
     }, []);
-    const showIosHint =
-        isIos && !isStandalone && !installEvent && !dismissedInstall;
     const showInstall =
         Boolean(installEvent) && !dismissedInstall && !isStandalone;
     return {
@@ -396,7 +402,6 @@ function usePwa() {
         updateReady,
         applyUpdate,
         showInstall,
-        showIosHint,
         isStandalone,
     };
 }
@@ -431,16 +436,6 @@ function InstallBanner({
                 <X size={16} />
             </button>
         </div>
-    );
-}
-
-function IosHint({ visible }: { visible: boolean }) {
-    if (!visible) return null;
-    return (
-        <p className="pwa-ios-hint" role="status">
-            On iPhone: tap <strong>Share → Add to Home Screen</strong> to
-            install GRE Study Desk for offline study.
-        </p>
     );
 }
 
@@ -541,6 +536,9 @@ function App() {
         rememberCurrentRoute();
     }, [route, locationVersion]);
     useEffect(() => {
+        if (user) flushQueue().catch(() => {});
+    }, [user]);
+    useEffect(() => {
         document.documentElement.setAttribute("data-theme", theme);
         try {
             localStorage.setItem(themeKey, theme);
@@ -566,9 +564,21 @@ function App() {
     const mutate = async (url: string, method: string, body: unknown) => {
         try {
             await api(url, { method, body: JSON.stringify(body) });
-        } catch {
-            await queueMutation({ url, method, body });
-            setNotice("Saved on this device. It will sync when you reconnect.");
+        } catch (error) {
+            if (error instanceof ApiRequestError) {
+                setNotice(
+                    error.status === 401
+                        ? "Sign in to sync your progress across devices."
+                        : error.message
+                );
+                return;
+            }
+            try {
+                await queueMutation({ url, method, body });
+                setNotice("Saved on this device. It will sync when you reconnect.");
+            } catch {
+                setNotice("Unable to save progress right now. Please try again.");
+            }
         }
     };
     const allVideos = useMemo(
@@ -808,8 +818,6 @@ function App() {
             <Nav
                 route={route}
                 go={go}
-                theme={theme}
-                onTheme={setTheme}
                 onInstall={pwa.install}
                 canInstall={Boolean(pwa.installEvent)}
             />
@@ -825,30 +833,10 @@ function App() {
                     onInstall={pwa.install}
                     onDismiss={pwa.dismissInstall}
                 />
-                <IosHint visible={pwa.showIosHint} />
                 <UpdateToast
                     visible={pwa.updateReady}
                     onUpdate={pwa.applyUpdate}
                 />
-                <header className="topbar">
-                    <div>
-                        {!online && (
-                            <span className="offline">
-                                <WifiOff size={15} /> Offline catalog mode
-                            </span>
-                        )}
-                    </div>
-                    <button
-                        className="shortcut-button"
-                        onClick={() =>
-                            setNotice(
-                                "/ Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · F Fullscreen · M Mute"
-                            )
-                        }
-                    >
-                        <Command size={15} /> Shortcuts
-                    </button>
-                </header>
                 {notice && (
                     <div className="notice" role="status">
                         {notice}
@@ -862,7 +850,12 @@ function App() {
                         catalogs={catalogs}
                         boot={boot}
                         mutate={mutate}
-                        onProgress={(videoId, positionSeconds, completed) =>
+                        onProgress={(
+                            videoId,
+                            positionSeconds,
+                            completed,
+                            watched
+                        ) =>
                             setBoot((current) => ({
                                 ...current,
                                 videos: [
@@ -872,7 +865,7 @@ function App() {
                                     {
                                         videoId,
                                         positionSeconds,
-                                        watched: 1,
+                                        watched: Number(watched),
                                         completed: Number(completed),
                                     },
                                 ],
@@ -897,7 +890,13 @@ function App() {
                 ) : route === "memorize" ? (
                     <Memorize />
                 ) : route === "account" ? (
-                    <Account user={user} onUser={setUser} onBoot={setBoot} />
+                    <Account
+                        user={user}
+                        onUser={setUser}
+                        onBoot={setBoot}
+                        theme={theme}
+                        onTheme={setTheme}
+                    />
                 ) : (
                     <Dashboard
                         catalogs={catalogs}
@@ -913,15 +912,11 @@ function App() {
 function Nav({
     route,
     go,
-    theme,
-    onTheme,
     onInstall,
     canInstall,
 }: {
     route: string;
     go: (route: string) => void;
-    theme: Theme;
-    onTheme: (theme: Theme) => void;
     onInstall: () => void;
     canInstall: boolean;
 }) {
@@ -1070,28 +1065,6 @@ function Nav({
                             </button>
                         )}
                         <button
-                            className="nav-account theme-toggle"
-                            onClick={() => onTheme(nextTheme(theme))}
-                            title={`Color theme: ${theme}`}
-                            aria-label="Change color theme"
-                        >
-                            <span className="sr-only">Color theme</span>
-                            {theme === "dark" ? (
-                                <Moon size={18} />
-                            ) : theme === "light" ? (
-                                <Sun size={18} />
-                            ) : (
-                                <Monitor size={18} />
-                            )}
-                            <span>
-                                {theme === "auto"
-                                    ? "Auto"
-                                    : theme === "light"
-                                    ? "Light"
-                                    : "Dark"}
-                            </span>
-                        </button>
-                        <button
                             className={`nav-account ${
                                 route === "account" ? "active" : ""
                             }`}
@@ -1117,7 +1090,7 @@ function Nav({
                             aria-current={active ? "page" : undefined}
                         >
                             <Icon
-                                size={22}
+                                size={20}
                                 aria-hidden="true"
                             />
                             <span>{link.label}</span>
@@ -1333,6 +1306,7 @@ type LessonPlayerProps = {
     playbackRate: number;
     onPlaybackRateChange: (rate: number) => void;
     onLoadedMetadata: (element: HTMLVideoElement) => void;
+    onPlay: (element: HTMLVideoElement) => void;
     onTimeUpdate: (element: HTMLVideoElement) => void;
     onPause: (element: HTMLVideoElement) => void;
     onEnded: (element: HTMLVideoElement) => void;
@@ -1354,6 +1328,7 @@ function LessonPlayer(props: LessonPlayerProps) {
         playbackRate,
         onPlaybackRateChange,
         onLoadedMetadata,
+        onPlay,
         onTimeUpdate,
         onPause,
         onEnded,
@@ -1373,7 +1348,6 @@ function LessonPlayer(props: LessonPlayerProps) {
     const [loading, setLoading] = useState(true),
         [error, setError] = useState<string | null>(null);
     const shouldAutoPlay = useRef(false);
-    const shouldFullscreen = useRef(false);
     useEffect(() => {
         const host = hostRef.current;
         if (!host) return;
@@ -1390,6 +1364,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                 player = videojs(element, {
                     controls: true,
                     preload: "auto",
+                    playsinline: true,
                     playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
                     controlBar: {
                         children: [
@@ -1444,16 +1419,12 @@ function LessonPlayer(props: LessonPlayerProps) {
                     const current = media();
                     if (current) {
                         videoRef.current = current;
+                        current.setAttribute("playsinline", "true");
+                        current.setAttribute("webkit-playsinline", "true");
                         onLoadedMetadata(current);
                         if (autoPlay || shouldAutoPlay.current) {
                             shouldAutoPlay.current = false;
                             current.play().catch(() => {});
-                        }
-                        if (shouldFullscreen.current) {
-                            shouldFullscreen.current = false;
-                            containerRef.current
-                                ?.requestFullscreen?.()
-                                .catch(() => {});
                         }
                     }
                 });
@@ -1461,6 +1432,10 @@ function LessonPlayer(props: LessonPlayerProps) {
                 player.on("canplay", () => setLoading(false));
                 player.on("waiting", () => setLoading(true));
                 player.on("playing", () => setLoading(false));
+                player.on("play", () => {
+                    const current = media();
+                    if (current) onPlay(current);
+                });
                 player.on("timeupdate", () => {
                     const current = media();
                     if (current) onTimeUpdate(current);
@@ -1521,24 +1496,11 @@ function LessonPlayer(props: LessonPlayerProps) {
         )
             playerRef.current.playbackRate(playbackRate);
     }, [playbackRate]);
-    const isFullscreen = () =>
-        Boolean(
-            document.fullscreenElement &&
-                (document.fullscreenElement === containerRef.current ||
-                    containerRef.current?.contains(document.fullscreenElement))
-        );
     const navigateKeepFullscreen = (lessonId: string) => {
-        if (isFullscreen()) {
-            shouldFullscreen.current = true;
-            shouldAutoPlay.current = true;
-        }
         onSelectLesson?.(lessonId);
     };
     const autoPlayNext = (lessonId: string) => {
         shouldAutoPlay.current = true;
-        if (isFullscreen()) {
-            shouldFullscreen.current = true;
-        }
         onSelectLesson?.(lessonId);
     };
     return (
@@ -1681,6 +1643,11 @@ function Learn({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
     const [search, setSearch] = useState(getParam("q", ""));
     const categoryFilter = getParam("category", "");
     const watchedFilter = getParam("watched", "");
+    const hasActiveFilters = Boolean(search || categoryFilter || watchedFilter);
+    const [filtersOpen, setFiltersOpen] = useState(hasActiveFilters);
+    useEffect(() => {
+        if (hasActiveFilters) setFiltersOpen(true);
+    }, [hasActiveFilters]);
     const course = catalogs.videos[subject];
     const flat = course.categories.flatMap((c) => c.videos);
     const watchedIds = new Set(
@@ -1690,6 +1657,14 @@ function Learn({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
                     Boolean(progress.watched) || Boolean(progress.completed)
             )
             .map((progress) => progress.videoId)
+    );
+    const completedIds = new Set(
+        boot.videos
+            .filter((progress) => Boolean(progress.completed))
+            .map((progress) => progress.videoId)
+    );
+    const progressById = new Map(
+        boot.videos.map((progress) => [progress.videoId, progress])
     );
     const visibleCategories = course.categories
         .map((category) => ({
@@ -1710,6 +1685,7 @@ function Learn({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
         );
     const clearFilters = () => {
         setSearch("");
+        setFiltersOpen(false);
         setParams({ category: undefined, watched: undefined });
     };
     return (
@@ -1759,6 +1735,18 @@ function Learn({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
                         onAutoPlayChange={setAutoPlay}
                     />
                 </div>
+                <button
+                    type="button"
+                    className={`mobile-filter-toggle ${
+                        hasActiveFilters ? "has-active" : ""
+                    }`}
+                    onClick={() => setFiltersOpen((open) => !open)}
+                    aria-expanded={filtersOpen}
+                    aria-controls="lesson-filters"
+                >
+                    <SlidersHorizontal size={18} />
+                    Filters{hasActiveFilters ? " (active)" : ""}
+                </button>
             </section>
             <section
                 className="lesson-catalogue"
@@ -1780,7 +1768,11 @@ function Learn({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
                         lessons shown
                     </span>
                 </div>
-                <div className="catalogue-filters" aria-label="Lesson filters">
+                <div
+                    id="lesson-filters"
+                    className={`catalogue-filters ${filtersOpen ? "is-open" : ""}`}
+                    aria-label="Lesson filters"
+                >
                     <label className="search">
                         <Search size={17} />
                         <input
@@ -1878,13 +1870,27 @@ function Learn({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
                                                                 }
                                                             />
                                                         </span>
-                                                        {watchedIds.has(
-                                                            item.id
-                                                        ) ? (
+                                                        {completedIds.has(item.id) ? (
                                                             <Check
                                                                 size={15}
-                                                                aria-label="Watched"
+                                                                aria-label="Completed"
                                                             />
+                                                        ) : watchedIds.has(item.id) ? (
+                                                            <small>
+                                                                {progressById.get(item.id)?.positionSeconds &&
+                                                                item.durationSeconds
+                                                                    ? `${Math.min(
+                                                                          99,
+                                                                          Math.round(
+                                                                              ((progressById.get(item.id)
+                                                                                  ?.positionSeconds ??
+                                                                                  0) /
+                                                                                  item.durationSeconds) *
+                                                                                  100
+                                                                          )
+                                                                      )}%`
+                                                                    : "In progress"}
+                                                            </small>
                                                         ) : (
                                                             <small>
                                                                 {item.durationSeconds
@@ -1933,7 +1939,8 @@ function LearnPlayer({
     onProgress: (
         videoId: string,
         positionSeconds: number,
-        completed: boolean
+        completed: boolean,
+        watched: boolean
     ) => void;
 }) {
     const { autoNext, setAutoNext, autoPlay, setAutoPlay } = useAutoSettings();
@@ -1950,6 +1957,8 @@ function LearnPlayer({
     const videoRef = useRef<HTMLVideoElement>(null);
     const lastSaved = useRef(0);
     const completedRef = useRef(false);
+    const watchedRef = useRef(false);
+    const saveProgressRef = useRef<() => void>(() => {});
     const stored = boot.videos.find((item) => item.videoId === video?.id);
     const videoIndex = flat.findIndex((item) => item.id === video?.id);
     const previous = flat[videoIndex - 1];
@@ -1967,62 +1976,86 @@ function LearnPlayer({
     useEffect(() => {
         lastSaved.current = stored?.positionSeconds ?? 0;
         completedRef.current = Boolean(stored?.completed);
+        watchedRef.current = Boolean(stored?.watched || stored?.completed);
         setPlaybackRate(1);
         setEnded(false);
         clearCountdown();
     }, [video?.id, clearCountdown]);
     useEffect(() => () => clearCountdown(), [clearCountdown]);
-    if (!video) return <Empty label="No downloaded lessons yet." />;
-    const descriptionElement = document.createElement("div");
-    descriptionElement.innerHTML = video.descriptionHtml;
-    const isExerciseDescription =
-        descriptionElement.textContent?.trim() === `${video.title} Exercise`;
     const save = (
         completed = completedRef.current,
         element = videoRef.current,
         force = false
     ) => {
-        const positionSeconds =
-            element?.currentTime ?? stored?.positionSeconds ?? 0;
+        if (!video) return;
+        const rawPosition =
+            element?.currentTime ?? stored?.positionSeconds ?? lastSaved.current;
+        const positionSeconds = Number.isFinite(rawPosition)
+            ? Math.max(0, rawPosition)
+            : lastSaved.current;
+        const watched =
+            watchedRef.current || completedRef.current || completed;
         if (
             !force &&
             completedRef.current &&
             completed &&
-            Math.abs(positionSeconds - lastSaved.current) < 5
+            Math.abs(positionSeconds - lastSaved.current) < 2
         )
             return;
         if (
             !force &&
             !completed &&
-            Math.abs(positionSeconds - lastSaved.current) < 5
+            Math.abs(positionSeconds - lastSaved.current) < 2
         )
             return;
         completedRef.current = completedRef.current || completed;
+        watchedRef.current = watched;
         lastSaved.current = positionSeconds;
         mutate(
             `/api/me/videos/${encodeURIComponent(video.id)}/progress`,
             `PUT`,
             {
                 positionSeconds,
-                watched: true,
+                watched,
                 completed: completedRef.current,
-                idempotencyKey: crypto.randomUUID(),
+                idempotencyKey: newIdempotencyKey(),
             }
         );
-        onProgress(video.id, positionSeconds, completedRef.current);
+        onProgress(video.id, positionSeconds, completedRef.current, watched);
     };
+    saveProgressRef.current = () =>
+        save(completedRef.current, videoRef.current, true);
+    useEffect(() => {
+        const persist = () => saveProgressRef.current();
+        const persistWhenHidden = () => {
+            if (document.visibilityState === "hidden") persist();
+        };
+        window.addEventListener("pagehide", persist);
+        document.addEventListener("visibilitychange", persistWhenHidden);
+        return () => {
+            window.removeEventListener("pagehide", persist);
+            document.removeEventListener("visibilitychange", persistWhenHidden);
+        };
+    }, [video?.id]);
+    if (!video) return <Empty label="No downloaded lessons yet." />;
+    const descriptionElement = document.createElement("div");
+    descriptionElement.innerHTML = video.descriptionHtml;
+    const isExerciseDescription =
+        descriptionElement.textContent?.trim() === `${video.title} Exercise`;
     const trackPlayback = (element: HTMLVideoElement) => {
-        const completesNow = Boolean(
-            element.duration &&
-                element.currentTime / element.duration >= 0.9 &&
-                !completedRef.current
-        );
-        save(completesNow || completedRef.current, element);
+        const duration = element.duration;
+        const progress =
+            Number.isFinite(duration) && duration > 0
+                ? element.currentTime / duration
+                : 0;
+        const completesNow = progress >= 0.9;
+        save(completesNow, element);
     };
     const resume = (element: HTMLVideoElement) => {
         if (
             stored?.positionSeconds &&
-            element.duration &&
+            Number.isFinite(element.duration) &&
+            element.duration > 0 &&
             stored.positionSeconds < element.duration * 0.9
         )
             element.currentTime = stored.positionSeconds;
@@ -2053,6 +2086,7 @@ function LearnPlayer({
         }, 1000);
     };
     const handleEnded = (element: HTMLVideoElement) => {
+        watchedRef.current = true;
         save(true, element, true);
         setEnded(true);
         if (autoNext && next) startCountdown(next.id);
@@ -2126,6 +2160,10 @@ function LearnPlayer({
                             videoRef.current.playbackRate = rate;
                     }}
                     onLoadedMetadata={resume}
+                    onPlay={(element) => {
+                        watchedRef.current = true;
+                        save(false, element, true);
+                    }}
                     onTimeUpdate={trackPlayback}
                     onPause={(element) =>
                         save(completedRef.current, element, true)
@@ -2520,6 +2558,19 @@ function Practice({
 }) {
     const subject = getParam("subject", "quant") as Subject;
     const filters = getPracticeFilters();
+    const hasActiveFilters = Boolean(
+        filters.search ||
+            filters.category ||
+            filters.difficulty ||
+            filters.type ||
+            filters.filter ||
+            filters.solution ||
+            filters.sort !== "title"
+    );
+    const [filtersOpen, setFiltersOpen] = useState(hasActiveFilters);
+    useEffect(() => {
+        if (hasActiveFilters) setFiltersOpen(true);
+    }, [hasActiveFilters]);
     const attempted = new Set(
             boot.attempts.map((attempt) => attempt.questionId)
         ),
@@ -2551,7 +2602,8 @@ function Practice({
         bookmarked
     );
     const [resetMessage, setResetMessage] = useState("");
-    const clearFilters = () =>
+    const clearFilters = () => {
+        setFiltersOpen(false);
         setParams({
             q: undefined,
             category: undefined,
@@ -2561,8 +2613,10 @@ function Practice({
             solution: undefined,
             sort: undefined,
         });
+    };
     const switchSubject = (next: Subject) => {
         setResetMessage("");
+        setFiltersOpen(false);
         setParams({
             subject: next,
             question: undefined,
@@ -2690,7 +2744,23 @@ function Practice({
                     </button>
                 </div>
             </section>
-            <section className="problem-controls" aria-label="Question filters">
+            <button
+                type="button"
+                className={`mobile-filter-toggle ${
+                    hasActiveFilters ? "has-active" : ""
+                }`}
+                onClick={() => setFiltersOpen((open) => !open)}
+                aria-expanded={filtersOpen}
+                aria-controls="question-filters"
+            >
+                <SlidersHorizontal size={18} />
+                Filters{hasActiveFilters ? " (active)" : ""}
+            </button>
+            <section
+                id="question-filters"
+                className={`problem-controls ${filtersOpen ? "is-open" : ""}`}
+                aria-label="Question filters"
+            >
                 <label className="question-search">
                     <span>Search</span>
                     <div>
@@ -3067,7 +3137,7 @@ function PracticeQuestion({
                     body: JSON.stringify({
                         selectedChoiceIds: selected,
                         response: answerResponse(question, selected),
-                        idempotencyKey: crypto.randomUUID(),
+                        idempotencyKey: newIdempotencyKey(),
                     }),
                 }
             );
@@ -3442,8 +3512,14 @@ function SolutionPlayer({ src }: { src: string }) {
             player = videojs(element, {
                 controls: true,
                 preload: "metadata",
+                playsinline: true,
                 aspectRatio: "16:9",
                 playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
+            });
+            player.ready(() => {
+                const media = player.el().querySelector("video");
+                media?.setAttribute("playsinline", "true");
+                media?.setAttribute("webkit-playsinline", "true");
             });
             player.src({ src, type: "video/mp4" });
         });
@@ -3518,14 +3594,56 @@ function SolutionModal({
         </div>
     );
 }
+function ThemeSettings({
+    theme,
+    onTheme,
+}: {
+    theme: Theme;
+    onTheme: (theme: Theme) => void;
+}) {
+    const options: Array<{ value: Theme; label: string; icon: typeof Sun }> = [
+        { value: "auto", label: "Auto", icon: Monitor },
+        { value: "light", label: "Light", icon: Sun },
+        { value: "dark", label: "Dark", icon: Moon },
+    ];
+    return (
+        <div className="account-card account-settings">
+            <div>
+                <span className="section-label">Preferences</span>
+                <h2>Appearance</h2>
+                <p>Choose how GRE Study Desk looks on this device.</p>
+            </div>
+            <div className="theme-options" role="radiogroup" aria-label="Color theme">
+                {options.map(({ value, label, icon: Icon }) => (
+                    <button
+                        key={value}
+                        type="button"
+                        className={theme === value ? "selected" : ""}
+                        onClick={() => onTheme(value)}
+                        role="radio"
+                        aria-checked={theme === value}
+                    >
+                        <Icon size={18} aria-hidden="true" />
+                        {label}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function Account({
     user,
     onUser,
     onBoot,
+    theme,
+    onTheme,
 }: {
     user: any;
     onUser: (u: any) => void;
     onBoot: (b: Bootstrap) => void;
+    theme: Theme;
+    onTheme: (theme: Theme) => void;
 }) {
     const [mode, setMode] = useState<"login" | "register">("login"),
         [username, setUsername] = useState(""),
@@ -3562,6 +3680,7 @@ function Account({
                         <LogOut size={17} /> Log out
                     </button>
                 </div>
+                <ThemeSettings theme={theme} onTheme={onTheme} />
             </section>
         );
     return (
@@ -3614,6 +3733,7 @@ function Account({
                     {mode === "login" ? "Log in" : "Create account"}
                 </button>
             </form>
+            <ThemeSettings theme={theme} onTheme={onTheme} />
         </section>
     );
 }

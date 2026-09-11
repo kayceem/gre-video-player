@@ -99,32 +99,10 @@ button:disabled {
     margin: 0 auto;
     padding: 23px 48px 62px;
 }
-.topbar {
-    height: 34px;
-    display: flex;
-    justify-content: flex-end;
-    align-items: flex-start;
-}
-.shortcut-button {
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text-secondary);
-    border-radius: 8px;
-    padding: 6px 9px;
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    font-size: 12px;
-}
-.offline,
 .notice {
     display: flex;
     align-items: center;
     gap: 7px;
-}
-.offline {
-    color: var(--warning-text);
-    font-size: 13px;
 }
 .notice {
     background: var(--warning-bg);
@@ -661,16 +639,6 @@ button:disabled {
     }
     .page {
         padding: 16px 20px 95px;
-    }
-    .topbar {
-        height: 27px;
-    }
-    .shortcut-button {
-        font-size: 0;
-        padding: 6px;
-    }
-    .shortcut-button svg {
-        margin: 0;
     }
     .page-intro {
         padding: 37px 0 26px;
@@ -1364,9 +1332,6 @@ body {
 .page {
     width: min(1360px, 100%);
     padding: 0 clamp(16px, 4vw, 48px) 64px;
-}
-.topbar {
-    display: none;
 }
 .page-intro {
     padding: 56px 0 30px;
@@ -3111,10 +3076,6 @@ body {
 .site-nav {
     background: var(--nav-bg);
 }
-.theme-toggle {
-    margin-right: 8px;
-}
-
 /* Header controls & Auto toggles */
 .learn-header-controls {
     display: flex;
@@ -4687,14 +4648,6 @@ textarea {
     place-items: center;
     flex: 0 0 auto;
 }
-.pwa-ios-hint {
-    background: var(--accent-soft);
-    color: var(--accent-text-strong);
-    border-radius: 12px;
-    padding: 12px 14px;
-    font-size: 13px;
-    margin: 14px 0 0;
-}
 .pwa-update {
     position: sticky;
     top: 76px;
@@ -4821,7 +4774,6 @@ textarea {
         gap: 10px;
     }
     .nav-links,
-    .nav-util .theme-toggle span:last-child,
     .nav-util .nav-account span,
     .nav-util .install-btn {
         display: none;
@@ -5054,4 +5006,130 @@ textarea {
     }
 }
 
+/* Final responsive/accessibility adjustments */
+button > svg.lucide,
+a > svg.lucide {
+    flex: 0 0 auto;
+}
+.nav-account > svg.lucide {
+    width: 18px;
+    height: 18px;
+}
+.tabbar-item > svg.lucide {
+    width: 20px;
+    height: 20px;
+}
+.mobile-filter-toggle {
+    display: none;
+}
+.account-settings {
+    margin-top: 16px;
+}
+.account-settings h2 {
+    margin-bottom: 6px;
+}
+.account-settings p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+.theme-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+.theme-options button {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-raised);
+    color: var(--text-body);
+    font-size: 13px;
+    font-weight: 700;
+}
+.theme-options button.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-text);
+}
+.lesson-end-screen {
+    overflow: auto;
+    padding: 12px;
+}
+.end-screen-content {
+    width: min(100%, 520px);
+    max-height: 100%;
+    overflow: auto;
+    padding: clamp(12px, 4vw, 24px);
+}
+.end-screen-actions button {
+    min-width: 0;
+}
 
+@media (max-width: 760px) {
+    .site-nav {
+        display: none;
+    }
+    .page {
+        padding-top: calc(16px + env(safe-area-inset-top));
+    }
+    .mobile-filter-toggle {
+        width: 100%;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        margin-top: 12px;
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: var(--surface);
+        color: var(--text-body);
+        font-size: 13px;
+        font-weight: 750;
+    }
+    .mobile-filter-toggle.has-active {
+        border-color: var(--accent-border);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+    }
+    .catalogue-filters:not(.is-open),
+    .problem-controls:not(.is-open) {
+        display: none;
+    }
+    .catalogue-filters.is-open,
+    .problem-controls.is-open {
+        display: grid;
+    }
+    .problem-controls.is-open {
+        margin-top: 10px;
+    }
+    .end-screen-content {
+        padding: 12px 4px;
+    }
+    .end-screen-content h2 {
+        font-size: clamp(21px, 7vw, 30px);
+        margin-bottom: 14px;
+    }
+    .end-screen-actions {
+        width: 100%;
+        gap: 7px;
+    }
+    .end-screen-actions button {
+        width: 100%;
+        min-height: 42px;
+        padding: 9px 10px;
+        font-size: 13px;
+    }
+    .end-screen-hint {
+        display: none;
+    }
+    .account-settings {
+        padding: 20px;
+    }
+}
