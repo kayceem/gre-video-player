@@ -53,7 +53,7 @@ app.set(
 app.use((req, res, next) => {
     res.set({
         "Content-Security-Policy":
-            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self'",
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https://gregmatapi.s3.amazonaws.com; media-src 'self' data: blob: https://gregmat-polly.s3.amazonaws.com https://gregmatapi.s3.amazonaws.com; connect-src 'self' https://gregmat-polly.s3.amazonaws.com https://gregmatapi.s3.amazonaws.com; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self'",
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
@@ -664,6 +664,30 @@ app.get("/api/media/question-image/:filename", (req, res, next) => {
         if (!existsSync(file))
             return res.status(404).json({ error: "Image unavailable." });
         res.sendFile(file);
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.get("/api/audio-proxy", async (req, res, next) => {
+    try {
+        const rawUrl = req.query.url;
+        if (typeof rawUrl !== "string" || !rawUrl.startsWith("https://")) {
+            return res.status(400).json({ error: "Invalid audio URL." });
+        }
+        const audioRes = await fetch(rawUrl, {
+            headers: {
+                "Origin": "https://www.gregmat.com",
+                "Referer": "https://www.gregmat.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        });
+        if (!audioRes.ok) {
+            return res.status(audioRes.status).json({ error: "Failed to fetch audio stream." });
+        }
+        res.set("Content-Type", audioRes.headers.get("content-type") || "audio/mpeg");
+        const arrayBuffer = await audioRes.arrayBuffer();
+        res.send(Buffer.from(arrayBuffer));
     } catch (error) {
         next(error);
     }

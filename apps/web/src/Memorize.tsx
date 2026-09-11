@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    ArrowDown,
-    ArrowUp,
+    ArrowLeft,
     Check,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
     Eye,
     EyeOff,
-    HelpCircle,
+    Filter,
     RotateCcw,
     Shuffle,
     SortAsc,
@@ -16,8 +15,8 @@ import {
     X,
 } from "lucide-react";
 import type {
+    FilterOption,
     ItemStatus,
-    MountainCategory,
     MountainData,
     MountainItem,
     MountainSource,
@@ -51,6 +50,16 @@ const SOURCE_CONFIGS: Array<{
     },
 ];
 
+function getUrlSource(): MountainSource {
+    try {
+        const param = new URLSearchParams(window.location.search).get("source");
+        if (param === "quant" || param === "quant-overwhelmed" || param === "verbal") {
+            return param as MountainSource;
+        }
+    } catch {}
+    return "verbal";
+}
+
 function getStoredStatus(
     source: MountainSource,
     groupSlug: string,
@@ -83,16 +92,16 @@ function setStoredStatus(
 }
 
 export function Memorize() {
-    const [source, setSource] = useState<MountainSource>(() => {
-        try {
-            return (
-                (localStorage.getItem("memorize:last-source") as MountainSource) ||
-                "verbal"
-            );
-        } catch {
-            return "verbal";
-        }
-    });
+    const [source, setSource] = useState<MountainSource>(getUrlSource);
+
+    // Sync source state when URL query params change (e.g. from navbar selector)
+    useEffect(() => {
+        const handlePopState = () => {
+            setSource(getUrlSource());
+        };
+        window.addEventListener("popstate", handlePopState);
+        return () => window.removeEventListener("popstate", handlePopState);
+    }, []);
 
     const [dataCache, setDataCache] = useState<
         Partial<Record<MountainSource, MountainData>>
@@ -103,6 +112,9 @@ export function Memorize() {
     const [selectedCategorySlug, setSelectedCategorySlug] = useState<string>("");
     const [selectedIndex, setSelectedIndex] = useState<number>(0);
 
+    // View Mode: "list" (single column layout) or "detail" (full definition page)
+    const [viewMode, setViewMode] = useState<"list" | "detail">("list");
+
     // Controls & Toggles
     const [showDefinition, setShowDefinition] = useState<boolean>(() => {
         try {
@@ -112,26 +124,18 @@ export function Memorize() {
         }
     });
     const [sortOption, setSortOption] = useState<SortOption>("default");
+    const [filterOption, setFilterOption] = useState<FilterOption>("all");
     const [isShuffled, setIsShuffled] = useState<boolean>(false);
     const [shuffleSeed, setShuffleSeed] = useState<number>(0);
 
-    // Modal state
-    const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-    // Explicitly revealed items in current session (when D is pressed inside modal or main)
+    // Explicitly revealed items in current session (when D is pressed)
     const [revealedItems, setRevealedItems] = useState<Set<string>>(new Set());
 
-    // Status mapping state (itemSlug -> status) to trigger quick re-renders
+    // Status mapping state (itemSlug -> status)
     const [statuses, setStatuses] = useState<Record<string, ItemStatus>>({});
 
     const currentAudioRef = useRef<HTMLAudioElement | null>(null);
     const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
-
-    // Save source preference
-    useEffect(() => {
-        try {
-            localStorage.setItem("memorize:last-source", source);
-        } catch {}
-    }, [source]);
 
     // Save show definition toggle
     useEffect(() => {
@@ -188,6 +192,7 @@ export function Memorize() {
     const handleCategoryChange = (slug: string) => {
         setSelectedCategorySlug(slug);
         setSelectedIndex(0);
+        setViewMode("list");
         setRevealedItems(new Set());
         try {
             localStorage.setItem(`memorize:last-cat:${source}`, slug);
@@ -218,13 +223,23 @@ export function Memorize() {
         setSelectedIndex(0);
     }, [source, currentCategory]);
 
-    // Prepare display items according to shuffle & sort options
+    // Prepare display items according to filter, shuffle & sort options
     const displayItems = useMemo(() => {
         if (!currentCategory) return [];
         let items = [...currentCategory.mountain_contents];
 
+        // Apply Status Filter
+        if (filterOption === "known") {
+            items = items.filter((item) => statuses[item.slug] === "G");
+        } else if (filterOption === "forgot") {
+            items = items.filter((item) => statuses[item.slug] === "R");
+        } else if (filterOption === "new") {
+            items = items.filter((item) => !statuses[item.slug]);
+        } else if (filterOption === "forgot-new") {
+            items = items.filter((item) => statuses[item.slug] !== "G");
+        }
+
         if (isShuffled) {
-            // Seeded deterministic pseudo-shuffle for stable rendering during state updates
             items = items
                 .map((item, idx) => ({
                     item,
@@ -237,7 +252,6 @@ export function Memorize() {
         if (sortOption === "alphabetical") {
             items.sort((a, b) => a.title.localeCompare(b.title));
         } else if (sortOption === "status") {
-            // Unreviewed first, then R (forgot), then G (knew)
             const weight = (item: MountainItem) => {
                 const s = statuses[item.slug];
                 if (!s) return 0;
@@ -248,7 +262,7 @@ export function Memorize() {
         }
 
         return items;
-    }, [currentCategory, isShuffled, shuffleSeed, sortOption, statuses]);
+    }, [currentCategory, filterOption, isShuffled, shuffleSeed, sortOption, statuses]);
 
     // Bound selected index safely
     useEffect(() => {
@@ -259,15 +273,15 @@ export function Memorize() {
 
     const currentItem = displayItems[selectedIndex] || null;
 
-    // Scroll focused item into view in list
+    // Scroll focused item into view in list mode
     useEffect(() => {
-        if (!isModalOpen && itemRefs.current[selectedIndex]) {
+        if (viewMode === "list" && itemRefs.current[selectedIndex]) {
             itemRefs.current[selectedIndex]?.scrollIntoView({
                 block: "nearest",
                 behavior: "smooth",
             });
         }
-    }, [selectedIndex, isModalOpen]);
+    }, [selectedIndex, viewMode]);
 
     // Update item status handler (G, R, W)
     const handleSetStatus = useCallback(
@@ -279,7 +293,7 @@ export function Memorize() {
         [source, currentCategory]
     );
 
-    // Audio / Speech output
+    // Audio / Speech output using backend audio proxy (with Origin: gregmat.com header)
     const handleSpeak = useCallback((item: MountainItem) => {
         if (currentAudioRef.current) {
             currentAudioRef.current.pause();
@@ -287,11 +301,15 @@ export function Memorize() {
         }
 
         if (item.pronunciation) {
-            const audio = new Audio(item.pronunciation);
+            const proxyUrl = `/api/audio-proxy?url=${encodeURIComponent(
+                item.pronunciation
+            )}`;
+            const audio = new Audio(proxyUrl);
             currentAudioRef.current = audio;
             audio.play().catch(() => {
-                // Speech synthesis fallback if audio playback fails
+                // Speech synthesis fallback
                 if ("speechSynthesis" in window) {
+                    window.speechSynthesis.cancel();
                     const u = new SpeechSynthesisUtterance(item.title);
                     u.lang = "en-US";
                     window.speechSynthesis.speak(u);
@@ -334,38 +352,38 @@ export function Memorize() {
             const key = e.key;
             const keyLower = key.toLowerCase();
 
-            // Modal Escape
-            if (key === "Escape" && isModalOpen) {
+            // Escape or Backspace in detail mode -> return to list page
+            if ((key === "Escape" || key === "Backspace") && viewMode === "detail") {
                 e.preventDefault();
-                setIsModalOpen(false);
+                setViewMode("list");
                 return;
             }
 
-            // Arrow Down / k -> Next item
-            if (key === "ArrowDown" || keyLower === "k") {
+            // Arrow Down / Arrow Right / k -> Next item
+            if (key === "ArrowDown" || key === "ArrowRight" || keyLower === "k") {
                 e.preventDefault();
                 setSelectedIndex((prev) => Math.min(displayItems.length - 1, prev + 1));
                 return;
             }
 
-            // Arrow Up / j -> Previous item
-            if (key === "ArrowUp" || keyLower === "j") {
+            // Arrow Up / Arrow Left / j -> Previous item
+            if (key === "ArrowUp" || key === "ArrowLeft" || keyLower === "j") {
                 e.preventDefault();
                 setSelectedIndex((prev) => Math.max(0, prev - 1));
                 return;
             }
 
-            // D -> Definition
+            // D -> Definition (toggle reveal or open detail page)
             if (keyLower === "d") {
                 e.preventDefault();
-                if (!isModalOpen) {
-                    setIsModalOpen(true);
+                if (viewMode === "list") {
+                    setViewMode("detail");
                 }
                 toggleRevealCurrentItem();
                 return;
             }
 
-            // G -> Knew this
+            // G -> Mark Known
             if (keyLower === "g") {
                 e.preventDefault();
                 if (currentItem) {
@@ -374,8 +392,8 @@ export function Memorize() {
                 return;
             }
 
-            // R -> Forgot this
-            if (keyLower === "r") {
+            // F -> Mark Forgot (shortcut updated from R to F)
+            if (keyLower === "f") {
                 e.preventDefault();
                 if (currentItem) {
                     handleSetStatus(currentItem, "R");
@@ -408,7 +426,7 @@ export function Memorize() {
         displayItems,
         selectedIndex,
         currentItem,
-        isModalOpen,
+        viewMode,
         toggleRevealCurrentItem,
         handleSetStatus,
         handleSpeak,
@@ -433,43 +451,14 @@ export function Memorize() {
         };
     }, [currentCategory, statuses]);
 
-    // Check definition visibility for current modal item
-    const isDefinitionVisibleInModal = useMemo(() => {
+    // Check definition visibility for detail view
+    const isDefinitionVisibleInDetail = useMemo(() => {
         if (!currentItem) return false;
         return showDefinition || revealedItems.has(currentItem.slug);
     }, [currentItem, showDefinition, revealedItems]);
 
     return (
         <div className="memorize-container">
-            {/* Page Header */}
-            <header className="memorize-header">
-                <div className="memorize-title-section">
-                    <h1>GRE Mountain Memorize</h1>
-                    <p>
-                        Master GRE Vocabulary and Quant concepts with spaced repetition
-                        shortcuts.
-                    </p>
-                </div>
-
-                {/* Source Selection Tabs */}
-                <div className="memorize-source-tabs">
-                    {SOURCE_CONFIGS.map((cfg) => (
-                        <button
-                            key={cfg.id}
-                            className={`memorize-tab-btn ${
-                                source === cfg.id ? "active" : ""
-                            }`}
-                            onClick={() => {
-                                setSource(cfg.id);
-                                setIsModalOpen(false);
-                            }}
-                        >
-                            <span>{cfg.label}</span>
-                        </button>
-                    ))}
-                </div>
-            </header>
-
             {loading ? (
                 <div className="memorize-loading">
                     <div className="spinner"></div>
@@ -489,7 +478,126 @@ export function Memorize() {
                 </div>
             ) : !activeData || !currentCategory ? (
                 <div className="memorize-empty">No category data found.</div>
+            ) : viewMode === "detail" && currentItem ? (
+                /* ==========================================================================
+                   DEFINITION DETAIL PAGE VIEW (Instead of Popup Modal)
+                   ========================================================================== */
+                <div className="memorize-detail-page">
+                    {/* Top Bar Navigation */}
+                    <div className="detail-top-nav">
+                        <button
+                            className="back-list-btn"
+                            onClick={() => setViewMode("list")}
+                        >
+                            <ArrowLeft size={18} />
+                            <span>Back to List</span>
+                        </button>
+
+                        <div className="detail-position">
+                            <span className="cat-title">{currentCategory.title}</span>
+                            <span className="item-count">
+                                {selectedIndex + 1} of {displayItems.length}
+                            </span>
+                        </div>
+
+                        <div className="detail-nav-arrows">
+                            <button
+                                className="nav-arrow-btn"
+                                disabled={selectedIndex <= 0}
+                                onClick={() => setSelectedIndex((prev) => prev - 1)}
+                                title="Previous item (← / ↑ / J)"
+                            >
+                                <ChevronLeft size={20} />
+                            </button>
+                            <button
+                                className="nav-arrow-btn"
+                                disabled={selectedIndex >= displayItems.length - 1}
+                                onClick={() => setSelectedIndex((prev) => prev + 1)}
+                                title="Next item (→ / ↓ / K)"
+                            >
+                                <ChevronRight size={20} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Main Detail Content Sheet */}
+                    <div className="detail-content-sheet">
+                        <div className="detail-header-row">
+                            <div className="detail-title-group">
+                                <h1>{currentItem.title}</h1>
+                                {currentItem.tooltip && (
+                                    <span className="detail-tooltip">
+                                        ({currentItem.tooltip})
+                                    </span>
+                                )}
+                            </div>
+
+                            {currentItem.pronunciation || "speechSynthesis" in window ? (
+                                <button
+                                    className="detail-audio-btn"
+                                    onClick={() => handleSpeak(currentItem)}
+                                    title="Play pronunciation (S)"
+                                >
+                                    <Volume2 size={22} />
+                                    <span>Speak</span>
+                                </button>
+                            ) : null}
+                        </div>
+
+                        {/* Status Action Buttons Bar */}
+                        <div className="detail-status-bar">
+                            <button
+                                className={`detail-status-btn known ${
+                                    statuses[currentItem.slug] === "G" ? "active" : ""
+                                }`}
+                                onClick={() => handleSetStatus(currentItem, "G")}
+                            >
+                                <Check size={18} />
+                                <span>Known (G)</span>
+                            </button>
+                            <button
+                                className={`detail-status-btn forgot ${
+                                    statuses[currentItem.slug] === "R" ? "active" : ""
+                                }`}
+                                onClick={() => handleSetStatus(currentItem, "R")}
+                            >
+                                <X size={18} />
+                                <span>Forgot (F)</span>
+                            </button>
+                            <button
+                                className="detail-status-btn reset"
+                                onClick={() => handleSetStatus(currentItem, null)}
+                            >
+                                <RotateCcw size={18} />
+                                <span>Reset (W)</span>
+                            </button>
+                        </div>
+
+                        {/* Definition Body Section */}
+                        <div className="detail-body-section">
+                            {isDefinitionVisibleInDetail ? (
+                                <div className="definition-box">
+                                    <Html value={currentItem.description} />
+                                </div>
+                            ) : (
+                                <div className="definition-hidden-box">
+                                    <EyeOff size={36} />
+                                    <p>Definition hidden</p>
+                                    <button
+                                        className="memorize-btn primary"
+                                        onClick={toggleRevealCurrentItem}
+                                    >
+                                        Press <strong>D</strong> to Reveal Definition
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
             ) : (
+                /* ==========================================================================
+                   SINGLE COLUMN LIST PAGE VIEW
+                   ========================================================================== */
                 <div className="memorize-content">
                     {/* Controls & Toolbar */}
                     <div className="memorize-toolbar">
@@ -514,13 +622,31 @@ export function Memorize() {
 
                         {/* Actions Toolbar */}
                         <div className="memorize-actions">
+                            {/* Filter Selector */}
+                            <div className="memorize-sort-picker">
+                                <Filter size={15} className="sort-icon" />
+                                <select
+                                    value={filterOption}
+                                    onChange={(e) => {
+                                        setFilterOption(e.target.value as FilterOption);
+                                        setSelectedIndex(0);
+                                    }}
+                                >
+                                    <option value="all">Show All</option>
+                                    <option value="known">Known Only</option>
+                                    <option value="forgot">Forgot Only</option>
+                                    <option value="new">New Only</option>
+                                    <option value="forgot-new">Forgot & New</option>
+                                </select>
+                            </div>
+
                             {/* Show Definition Toggle */}
                             <button
                                 className={`memorize-toggle-btn ${
                                     showDefinition ? "active" : ""
                                 }`}
                                 onClick={() => setShowDefinition((prev) => !prev)}
-                                title="Toggle automatically showing definition in modal/list"
+                                title="Toggle automatically showing definition on detail page"
                             >
                                 {showDefinition ? <Eye size={16} /> : <EyeOff size={16} />}
                                 <span>Show Definition</span>
@@ -562,7 +688,7 @@ export function Memorize() {
                     <div className="memorize-stats-bar">
                         <div className="stats-badges">
                             <span className="badge badge-g">
-                                Knew: <strong>{stats.gCount}</strong>
+                                Known: <strong>{stats.gCount}</strong>
                             </span>
                             <span className="badge badge-r">
                                 Forgot: <strong>{stats.rCount}</strong>
@@ -591,224 +717,99 @@ export function Memorize() {
                     </div>
 
                     {/* Single Column Group Layout */}
-                    <div className="memorize-single-column">
-                        {displayItems.map((item, index) => {
-                            const status = statuses[item.slug];
-                            const isFocused = index === selectedIndex;
+                    {displayItems.length === 0 ? (
+                        <div className="memorize-empty-filter">
+                            <p>No items match the selected filter (<strong>{filterOption}</strong>).</p>
+                            <button className="memorize-btn primary" onClick={() => setFilterOption("all")}>
+                                Reset Filter to Show All
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="memorize-single-column">
+                            {displayItems.map((item, index) => {
+                                const status = statuses[item.slug];
+                                const isFocused = index === selectedIndex;
 
-                            return (
-                                <div
-                                    key={item.slug}
-                                    className={`memorize-item-card status-${
-                                        status ? status.toLowerCase() : "none"
-                                    } ${isFocused ? "focused" : ""}`}
-                                    onClick={() => {
-                                        setSelectedIndex(index);
-                                        setIsModalOpen(true);
-                                    }}
-                                    ref={(el) => {
-                                        itemRefs.current[index] = el;
-                                    }}
-                                    tabIndex={0}
-                                    role="button"
-                                >
-                                    <div className="item-main">
-                                        <div className="item-left">
-                                            <span className="item-index">{index + 1}.</span>
-                                            <span className="item-title">{item.title}</span>
-                                            {item.tooltip && (
-                                                <span className="item-tooltip">
-                                                    ({item.tooltip})
-                                                </span>
-                                            )}
-                                        </div>
+                                return (
+                                    <div
+                                        key={item.slug}
+                                        className={`memorize-item-card status-${
+                                            status ? status.toLowerCase() : "none"
+                                        } ${isFocused ? "focused" : ""}`}
+                                        onClick={() => {
+                                            setSelectedIndex(index);
+                                            setViewMode("detail");
+                                        }}
+                                        ref={(el) => {
+                                            itemRefs.current[index] = el;
+                                        }}
+                                        tabIndex={0}
+                                        role="button"
+                                    >
+                                        <div className="item-main">
+                                            <div className="item-left">
+                                                <span className="item-index">{index + 1}.</span>
+                                                <span className="item-title">{item.title}</span>
+                                                {item.tooltip && (
+                                                    <span className="item-tooltip">
+                                                        ({item.tooltip})
+                                                    </span>
+                                                )}
+                                            </div>
 
-                                        <div className="item-right">
-                                            {item.pronunciation && (
-                                                <button
-                                                    className="audio-btn"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleSpeak(item);
-                                                    }}
-                                                    title="Listen to pronunciation"
-                                                >
-                                                    <Volume2 size={16} />
-                                                </button>
-                                            )}
+                                            <div className="item-right">
+                                                {item.pronunciation && (
+                                                    <button
+                                                        className="audio-btn"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleSpeak(item);
+                                                        }}
+                                                        title="Listen to pronunciation"
+                                                    >
+                                                        <Volume2 size={16} />
+                                                    </button>
+                                                )}
 
-                                            <div className="status-indicators">
-                                                <button
-                                                    className={`status-btn g-btn ${
-                                                        status === "G" ? "active" : ""
-                                                    }`}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleSetStatus(
-                                                            item,
-                                                            status === "G" ? null : "G"
-                                                        );
-                                                    }}
-                                                    title="Press G - I knew this"
-                                                >
-                                                    G
-                                                </button>
-                                                <button
-                                                    className={`status-btn r-btn ${
-                                                        status === "R" ? "active" : ""
-                                                    }`}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleSetStatus(
-                                                            item,
-                                                            status === "R" ? null : "R"
-                                                        );
-                                                    }}
-                                                    title="Press R - I forgot this"
-                                                >
-                                                    R
-                                                </button>
+                                                <div className="status-indicators">
+                                                    <button
+                                                        className={`status-btn g-btn ${
+                                                            status === "G" ? "active" : ""
+                                                        }`}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleSetStatus(
+                                                                item,
+                                                                status === "G" ? null : "G"
+                                                            );
+                                                        }}
+                                                        title="Press G - Known"
+                                                    >
+                                                        G
+                                                    </button>
+                                                    <button
+                                                        className={`status-btn r-btn ${
+                                                            status === "R" ? "active" : ""
+                                                        }`}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleSetStatus(
+                                                                item,
+                                                                status === "R" ? null : "R"
+                                                            );
+                                                        }}
+                                                        title="Press F - Forgot"
+                                                    >
+                                                        F
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    {/* Keyboard Shortcuts Hint Bar */}
-                    <div className="memorize-shortcuts-bar">
-                        <div className="shortcut-tag">
-                            <kbd>↑</kbd> <kbd>↓</kbd> / <kbd>J</kbd> <kbd>K</kbd> Navigate
+                                );
+                            })}
                         </div>
-                        <div className="shortcut-tag">
-                            <kbd>D</kbd> Definition Modal
-                        </div>
-                        <div className="shortcut-tag">
-                            <kbd>G</kbd> I Knew This
-                        </div>
-                        <div className="shortcut-tag">
-                            <kbd>R</kbd> I Forgot This
-                        </div>
-                        <div className="shortcut-tag">
-                            <kbd>W</kbd> Reset
-                        </div>
-                        <div className="shortcut-tag">
-                            <kbd>S</kbd> Speak
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Definition Modal */}
-            {isModalOpen && currentItem && (
-                <div
-                    className="memorize-modal-backdrop"
-                    onClick={() => setIsModalOpen(false)}
-                >
-                    <div
-                        className="memorize-modal-card"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        {/* Modal Header */}
-                        <div className="modal-header">
-                            <div className="modal-title-row">
-                                <span className="modal-num">
-                                    {selectedIndex + 1} / {displayItems.length}
-                                </span>
-                                <h2>{currentItem.title}</h2>
-                                {currentItem.pronunciation || "speechSynthesis" in window ? (
-                                    <button
-                                        className="modal-audio-btn"
-                                        onClick={() => handleSpeak(currentItem)}
-                                        title="Play audio (S)"
-                                    >
-                                        <Volume2 size={20} />
-                                    </button>
-                                ) : null}
-                            </div>
-                            <button
-                                className="modal-close-btn"
-                                onClick={() => setIsModalOpen(false)}
-                            >
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        {/* Modal Body / Definition */}
-                        <div className="modal-body">
-                            {isDefinitionVisibleInModal ? (
-                                <div className="definition-box">
-                                    {currentItem.tooltip && (
-                                        <p className="definition-tooltip">
-                                            <em>{currentItem.tooltip}</em>
-                                        </p>
-                                    )}
-                                    <Html value={currentItem.description} />
-                                </div>
-                            ) : (
-                                <div className="definition-hidden-box">
-                                    <EyeOff size={32} />
-                                    <p>Definition hidden</p>
-                                    <button
-                                        className="memorize-btn primary"
-                                        onClick={toggleRevealCurrentItem}
-                                    >
-                                        Press <strong>D</strong> or Click to Reveal Definition
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Modal Footer Controls */}
-                        <div className="modal-footer">
-                            <div className="modal-actions-left">
-                                <button
-                                    className={`modal-action-btn g-action ${
-                                        statuses[currentItem.slug] === "G" ? "active" : ""
-                                    }`}
-                                    onClick={() => handleSetStatus(currentItem, "G")}
-                                >
-                                    <Check size={16} />
-                                    <span>known</span>
-                                </button>
-                                <button
-                                    className={`modal-action-btn r-action ${
-                                        statuses[currentItem.slug] === "R" ? "active" : ""
-                                    }`}
-                                    onClick={() => handleSetStatus(currentItem, "R")}
-                                >
-                                    <X size={16} />
-                                    <span>Forgot</span>
-                                </button>
-                                <button
-                                    className="modal-action-btn w-action"
-                                    onClick={() => handleSetStatus(currentItem, null)}
-                                    title="Reset status"
-                                >
-                                    <RotateCcw size={16} />
-                                    <span>Reset</span>
-                                </button>
-                            </div>
-
-                            <div className="modal-nav-right">
-                                <button
-                                    className="modal-nav-btn"
-                                    disabled={selectedIndex <= 0}
-                                    onClick={() => setSelectedIndex((prev) => prev - 1)}
-                                >
-                                    <ChevronLeft size={20} />
-                                </button>
-                                <button
-                                    className="modal-nav-btn"
-                                    disabled={selectedIndex >= displayItems.length - 1}
-                                    onClick={() => setSelectedIndex((prev) => prev + 1)}
-                                >
-                                    <ChevronRight size={20} />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    )}
                 </div>
             )}
         </div>

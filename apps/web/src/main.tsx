@@ -735,20 +735,80 @@ function Nav({
                     </span>
                 </button>
                 <nav className="nav-links" aria-label="Primary navigation">
-                    {links.map((link) => (
-                        <button
-                            key={link.id}
-                            className={
-                                route === link.id ||
-                                route.startsWith(`${link.id}/`)
-                                    ? "active"
-                                    : ""
-                            }
-                            onClick={() => go(link.id)}
-                        >
-                            {link.label}
-                        </button>
-                    ))}
+                    {links.map((link) => {
+                        const isActive =
+                            route === link.id ||
+                            route.startsWith(`${link.id}/`) ||
+                            (route.startsWith("memorize") && link.id === "memorize");
+
+                        if (link.id === "memorize") {
+                            return (
+                                <div key={link.id} className="nav-dropdown-wrapper">
+                                    <button
+                                        className={`nav-dropdown-btn ${isActive ? "active" : ""}`}
+                                        onClick={() => go("memorize")}
+                                    >
+                                        <span>{link.label}</span>
+                                        <ChevronDown size={14} className="dropdown-arrow" />
+                                    </button>
+                                    <div className="nav-dropdown-menu">
+                                        <button
+                                            className={
+                                                route.startsWith("memorize") &&
+                                                getParam("source", "verbal") === "verbal"
+                                                    ? "selected"
+                                                    : ""
+                                            }
+                                            onClick={() => {
+                                                go("memorize");
+                                                setParams({ source: "verbal" });
+                                            }}
+                                        >
+                                            Verbal Mountain
+                                        </button>
+                                        <button
+                                            className={
+                                                route.startsWith("memorize") &&
+                                                getParam("source", "verbal") === "quant"
+                                                    ? "selected"
+                                                    : ""
+                                            }
+                                            onClick={() => {
+                                                go("memorize");
+                                                setParams({ source: "quant" });
+                                            }}
+                                        >
+                                            Quant Mountain
+                                        </button>
+                                        <button
+                                            className={
+                                                route.startsWith("memorize") &&
+                                                getParam("source", "verbal") === "quant-overwhelmed"
+                                                    ? "selected"
+                                                    : ""
+                                            }
+                                            onClick={() => {
+                                                go("memorize");
+                                                setParams({ source: "quant-overwhelmed" });
+                                            }}
+                                        >
+                                            Quant Overwhelmed
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        return (
+                            <button
+                                key={link.id}
+                                className={isActive ? "active" : ""}
+                                onClick={() => go(link.id)}
+                            >
+                                {link.label}
+                            </button>
+                        );
+                    })}
                 </nav>
                 <button
                     className="nav-account theme-toggle"

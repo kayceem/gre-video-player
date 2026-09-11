@@ -27,3 +27,4 @@ export interface MountainData {
 export type MountainSource = "verbal" | "quant" | "quant-overwhelmed";
 export type ItemStatus = "G" | "R" | null;
 export type SortOption = "default" | "alphabetical" | "status";
+export type FilterOption = "all" | "known" | "forgot" | "new" | "forgot-new";
