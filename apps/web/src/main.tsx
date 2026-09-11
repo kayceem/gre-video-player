@@ -10,23 +10,27 @@ import { createRoot } from "react-dom/client";
 import katex from "katex";
 import {
     BookOpen,
+    Brain,
     Check,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
     CircleUserRound,
     Command,
+    Download,
     Gauge,
+    House,
     LogOut,
-    Menu,
     Monitor,
     Moon,
     Pause,
     Play,
+    RefreshCw,
     Search,
     SkipForward,
     Sparkles,
     Sun,
+    Target,
     WifiOff,
     X,
 } from "lucide-react";
@@ -285,6 +289,178 @@ const storeBool = (key: string, value: boolean) => {
     } catch {}
 };
 
+type BeforeInstallPromptEvent = Event & {
+    prompt: () => Promise<void>;
+    userChoice: Promise<{ outcome: string }>;
+};
+
+function usePwa() {
+    const [installEvent, setInstallEvent] =
+        useState<BeforeInstallPromptEvent | null>(null);
+    const [updateReady, setUpdateReady] = useState(false);
+    const [dismissedInstall, setDismissedInstall] = useState(() => {
+        try {
+            return localStorage.getItem("gre-install-dismissed") === "true";
+        } catch {
+            return false;
+        }
+    });
+    useEffect(() => {
+        const onPrompt = (event: Event) => {
+            event.preventDefault();
+            setInstallEvent(event as BeforeInstallPromptEvent);
+        };
+        addEventListener("beforeinstallprompt", onPrompt as EventListener);
+        return () =>
+            removeEventListener(
+                "beforeinstallprompt",
+                onPrompt as EventListener
+            );
+    }, []);
+    useEffect(() => {
+        if (!("serviceWorker" in navigator)) return;
+        let registration: ServiceWorkerRegistration | undefined;
+        navigator.serviceWorker
+            .register("/sw.js")
+            .then((reg) => {
+                registration = reg;
+                if (reg.waiting) setUpdateReady(true);
+                reg.addEventListener("updatefound", () => {
+                    reg.installing?.addEventListener("statechange", () => {
+                        if (
+                            reg.installing?.state === "installed" &&
+                            navigator.serviceWorker.controller
+                        )
+                            setUpdateReady(true);
+                    });
+                });
+            })
+            .catch(() => {});
+        const onController = () => setUpdateReady(false);
+        navigator.serviceWorker.addEventListener(
+            "controllerchange",
+            onController
+        );
+        return () => {
+            navigator.serviceWorker.removeEventListener(
+                "controllerchange",
+                onController
+            );
+            void registration;
+        };
+    }, []);
+    const install = useCallback(async () => {
+        if (!installEvent) return false;
+        await installEvent.prompt();
+        const choice = await installEvent.userChoice.catch(() => null);
+        setInstallEvent(null);
+        return choice?.outcome === "accepted";
+    }, [installEvent]);
+    const dismissInstall = useCallback(() => {
+        setDismissedInstall(true);
+        try {
+            localStorage.setItem("gre-install-dismissed", "true");
+        } catch {}
+    }, []);
+    const applyUpdate = useCallback(() => {
+        navigator.serviceWorker.getRegistration().then((reg) => {
+            reg?.waiting?.postMessage("SKIP_WAITING");
+        });
+        setUpdateReady(false);
+    }, []);
+    const isIos = useMemo(() => {
+        if (typeof navigator === "undefined") return false;
+        return (
+            /iphone|ipad|ipod/i.test(navigator.userAgent) &&
+            !(window as any).MSStream
+        );
+    }, []);
+    const isStandalone = useMemo(() => {
+        try {
+            return (
+                matchMedia("(display-mode: standalone)").matches ||
+                (navigator as any).standalone === true
+            );
+        } catch {
+            return false;
+        }
+    }, []);
+    const showIosHint =
+        isIos && !isStandalone && !installEvent && !dismissedInstall;
+    const showInstall =
+        Boolean(installEvent) && !dismissedInstall && !isStandalone;
+    return {
+        installEvent,
+        install,
+        dismissInstall,
+        updateReady,
+        applyUpdate,
+        showInstall,
+        showIosHint,
+        isStandalone,
+    };
+}
+
+function InstallBanner({
+    visible,
+    onInstall,
+    onDismiss,
+}: {
+    visible: boolean;
+    onInstall: () => void;
+    onDismiss: () => void;
+}) {
+    if (!visible) return null;
+    return (
+        <div className="pwa-banner" role="status">
+            <span className="pwa-banner-icon" aria-hidden="true">
+                <Download size={18} />
+            </span>
+            <p>
+                <strong>Install GRE Study Desk</strong>
+                <span>Quick access + offline lessons on your home screen.</span>
+            </p>
+            <button className="pwa-install" onClick={onInstall}>
+                Install
+            </button>
+            <button
+                className="pwa-dismiss"
+                onClick={onDismiss}
+                aria-label="Dismiss install prompt"
+            >
+                <X size={16} />
+            </button>
+        </div>
+    );
+}
+
+function IosHint({ visible }: { visible: boolean }) {
+    if (!visible) return null;
+    return (
+        <p className="pwa-ios-hint" role="status">
+            On iPhone: tap <strong>Share → Add to Home Screen</strong> to
+            install GRE Study Desk for offline study.
+        </p>
+    );
+}
+
+function UpdateToast({
+    visible,
+    onUpdate,
+}: {
+    visible: boolean;
+    onUpdate: () => void;
+}) {
+    if (!visible) return null;
+    return (
+        <div className="pwa-update" role="status">
+            <RefreshCw size={16} />
+            <span>A new version is ready.</span>
+            <button onClick={onUpdate}>Reload to update</button>
+        </div>
+    );
+}
+
 function App() {
     const [catalogs, setCatalogs] = useState<Catalogs>(initialCatalogs),
         [boot, setBoot] = useState<Bootstrap>({
@@ -304,6 +480,7 @@ function App() {
             location.pathname === "/" ? "dashboard" : location.pathname.slice(1)
         ),
         [locationVersion, setLocationVersion] = useState(0);
+    const pwa = usePwa();
     const rememberedRoutes = useRef({ learn: "/learn", practice: "/practice" });
     const rememberCurrentRoute = () => {
         const path = `${location.pathname}${location.search}`;
@@ -354,8 +531,6 @@ function App() {
         addEventListener("popstate", pop);
         addEventListener("online", on);
         addEventListener("offline", on);
-        if ("serviceWorker" in navigator)
-            navigator.serviceWorker.register("/sw.js");
         return () => {
             removeEventListener("popstate", pop);
             removeEventListener("online", on);
@@ -627,8 +802,34 @@ function App() {
         );
     return (
         <div className="app-shell">
-            <Nav route={route} go={go} theme={theme} onTheme={setTheme} />
-            <main className="page">
+            <a className="skip-link" href="#main-content">
+                Skip to content
+            </a>
+            <Nav
+                route={route}
+                go={go}
+                theme={theme}
+                onTheme={setTheme}
+                onInstall={pwa.install}
+                canInstall={Boolean(pwa.installEvent)}
+            />
+            {!online && (
+                <div className="offline-bar" role="status">
+                    <WifiOff size={15} /> You are offline — downloaded lessons,
+                    questions and flashcards still work.
+                </div>
+            )}
+            <main className="page" id="main-content" tabIndex={-1}>
+                <InstallBanner
+                    visible={pwa.showInstall}
+                    onInstall={pwa.install}
+                    onDismiss={pwa.dismissInstall}
+                />
+                <IosHint visible={pwa.showIosHint} />
+                <UpdateToast
+                    visible={pwa.updateReady}
+                    onUpdate={pwa.applyUpdate}
+                />
                 <header className="topbar">
                     <div>
                         {!online && (
@@ -714,195 +915,217 @@ function Nav({
     go,
     theme,
     onTheme,
+    onInstall,
+    canInstall,
 }: {
     route: string;
     go: (route: string) => void;
     theme: Theme;
     onTheme: (theme: Theme) => void;
+    onInstall: () => void;
+    canInstall: boolean;
 }) {
     const links = [
-        { id: "dashboard", label: "Overview" },
-        { id: "learn", label: "Learn" },
-        { id: "practice", label: "Practice" },
-        { id: "memorize", label: "Memorize" },
+        { id: "dashboard", label: "Home", icon: House },
+        { id: "learn", label: "Learn", icon: BookOpen },
+        { id: "practice", label: "Practice", icon: Target },
+        { id: "memorize", label: "Memorize", icon: Brain },
+        { id: "account", label: "Account", icon: CircleUserRound },
     ];
-    const [mobileOpen, setMobileOpen] = useState(false);
-    const [memorizeOpen, setMemorizeOpen] = useState(false);
-    useEffect(() => {
-        setMobileOpen(false);
-        setMemorizeOpen(false);
-    }, [route]);
-    // Lock body scroll when fullscreen mobile menu is open
-    useEffect(() => {
-        if (!mobileOpen) return;
-        const prev = document.body.style.overflow;
-        document.body.style.overflow = "hidden";
-        return () => {
-            document.body.style.overflow = prev;
-        };
-    }, [mobileOpen]);
-    const handleGo = (destination: string) => {
-        setMobileOpen(false);
-        setMemorizeOpen(false);
-        go(destination);
+    const isActive = (id: string) =>
+        route === id ||
+        route.startsWith(`${id}/`) ||
+        (id === "dashboard" && route === "dashboard");
+    const handleGo = (destination: string) => go(destination);
+    const goMemorize = (source: string) => {
+        handleGo("memorize");
+        setParams({ source });
     };
     return (
-        <header className={`site-nav ${mobileOpen ? "menu-open" : ""}`}>
-            <div className={`nav-inner ${mobileOpen ? "nav-open" : ""}`}>
-                <button className="brand" onClick={() => handleGo("dashboard")}>
-                    <span className="brand-mark">G</span>
-                    <span>
-                        GrePrep <b>GRE</b>
-                    </span>
-                </button>
-                <button
-                    className="nav-hamburger"
-                    onClick={() => setMobileOpen((v) => !v)}
-                    aria-label={mobileOpen ? "Close menu" : "Open menu"}
-                    aria-expanded={mobileOpen}
-                >
-                    {mobileOpen ? <X size={22} /> : <Menu size={22} />}
-                </button>
-                <nav className="nav-links" aria-label="Primary navigation">
-                    {links.map((link) => {
-                        const isActive =
-                            route === link.id ||
-                            route.startsWith(`${link.id}/`) ||
-                            (route.startsWith("memorize") && link.id === "memorize");
-
-                        if (link.id === "memorize") {
-                            return (
-                                <div
-                                    key={link.id}
-                                    className={`nav-dropdown-wrapper ${
-                                        memorizeOpen ? "open" : ""
-                                    }`}
-                                >
-                                    <button
-                                        className={`nav-dropdown-btn ${isActive ? "active" : ""}`}
-                                        onClick={() => {
-                                            if (
-                                                window.matchMedia(
-                                                    "(max-width: 760px)"
-                                                ).matches
-                                            ) {
-                                                setMemorizeOpen((v) => !v);
-                                            } else {
-                                                handleGo("memorize");
-                                            }
-                                        }}
-                                        aria-expanded={memorizeOpen}
-                                        aria-haspopup="true"
+        <>
+            <header className="site-nav">
+                <div className="nav-inner">
+                    <button
+                        className="brand"
+                        onClick={() => handleGo("dashboard")}
+                    >
+                        <span className="brand-mark">G</span>
+                        <span>
+                            GrePrep <b>GRE</b>
+                        </span>
+                    </button>
+                    <nav
+                        className="nav-links"
+                        aria-label="Primary navigation"
+                    >
+                        {links.slice(0, 4).map((link) => {
+                            if (link.id === "memorize") {
+                                return (
+                                    <div
+                                        key={link.id}
+                                        className="nav-dropdown-wrapper"
                                     >
-                                        <span
-                                            onClick={(e) => {
-                                                if (
-                                                    window.matchMedia(
-                                                        "(max-width: 760px)"
-                                                    ).matches
-                                                ) {
-                                                    e.stopPropagation();
-                                                    handleGo("memorize");
-                                                }
-                                            }}
+                                        <button
+                                            className={`nav-dropdown-btn ${
+                                                isActive(link.id)
+                                                    ? "active"
+                                                    : ""
+                                            }`}
+                                            onClick={() =>
+                                                handleGo("memorize")
+                                            }
+                                            aria-haspopup="true"
                                         >
                                             {link.label}
-                                        </span>
-                                    </button>
-                                    <div className="nav-dropdown-menu">
-                                        <button
-                                            className={
-                                                route.startsWith("memorize") &&
-                                                getParam("source", "verbal") === "verbal"
-                                                    ? "selected"
-                                                    : ""
-                                            }
-                                            onClick={() => {
-                                                handleGo("memorize");
-                                                setParams({ source: "verbal" });
-                                            }}
-                                        >
-                                            Verbal Mountain
                                         </button>
-                                        <button
-                                            className={
-                                                route.startsWith("memorize") &&
-                                                getParam("source", "verbal") === "quant"
-                                                    ? "selected"
-                                                    : ""
-                                            }
-                                            onClick={() => {
-                                                handleGo("memorize");
-                                                setParams({ source: "quant" });
-                                            }}
-                                        >
-                                            Quant Mountain
-                                        </button>
-                                        <button
-                                            className={
-                                                route.startsWith("memorize") &&
-                                                getParam("source", "verbal") === "quant-overwhelmed"
-                                                    ? "selected"
-                                                    : ""
-                                            }
-                                            onClick={() => {
-                                                handleGo("memorize");
-                                                setParams({ source: "quant-overwhelmed" });
-                                            }}
-                                        >
-                                            Quant Overwhelmed
-                                        </button>
+                                        <div className="nav-dropdown-menu">
+                                            <button
+                                                className={
+                                                    route.startsWith(
+                                                        "memorize"
+                                                    ) &&
+                                                    getParam(
+                                                        "source",
+                                                        "verbal"
+                                                    ) === "verbal"
+                                                        ? "selected"
+                                                        : ""
+                                                }
+                                                onClick={() =>
+                                                    goMemorize("verbal")
+                                                }
+                                            >
+                                                Verbal Mountain
+                                            </button>
+                                            <button
+                                                className={
+                                                    route.startsWith(
+                                                        "memorize"
+                                                    ) &&
+                                                    getParam(
+                                                        "source",
+                                                        "verbal"
+                                                    ) === "quant"
+                                                        ? "selected"
+                                                        : ""
+                                                }
+                                                onClick={() =>
+                                                    goMemorize("quant")
+                                                }
+                                            >
+                                                Quant Mountain
+                                            </button>
+                                            <button
+                                                className={
+                                                    route.startsWith(
+                                                        "memorize"
+                                                    ) &&
+                                                    getParam(
+                                                        "source",
+                                                        "verbal"
+                                                    ) ===
+                                                        "quant-overwhelmed"
+                                                        ? "selected"
+                                                        : ""
+                                                }
+                                                onClick={() =>
+                                                    goMemorize(
+                                                        "quant-overwhelmed"
+                                                    )
+                                                }
+                                            >
+                                                Quant Overwhelmed
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
+                                );
+                            }
+                            return (
+                                <button
+                                    key={link.id}
+                                    className={
+                                        isActive(link.id) ? "active" : ""
+                                    }
+                                    onClick={() => handleGo(link.id)}
+                                    aria-current={
+                                        isActive(link.id)
+                                            ? "page"
+                                            : undefined
+                                    }
+                                >
+                                    {link.label}
+                                </button>
                             );
-                        }
-
-                        return (
+                        })}
+                    </nav>
+                    <div className="nav-util">
+                        {canInstall && (
                             <button
-                                key={link.id}
-                                className={isActive ? "active" : ""}
-                                onClick={() => handleGo(link.id)}
+                                className="nav-account install-btn"
+                                onClick={onInstall}
+                                title="Install app"
                             >
-                                {link.label}
+                                <Download size={18} />
+                                <span>Install</span>
                             </button>
-                        );
-                    })}
-                </nav>
-                <div className="nav-util">
-                <button
-                    className="nav-account theme-toggle"
-                    onClick={() => onTheme(nextTheme(theme))}
-                    title={`Color theme: ${theme}`}
-                    aria-label="Change color theme"
-                >
-                    <span className="sr-only">Color theme</span>
-                    {theme === "dark" ? (
-                        <Moon size={18} />
-                    ) : theme === "light" ? (
-                        <Sun size={18} />
-                    ) : (
-                        <Monitor size={18} />
-                    )}
-                    <span>
-                        {theme === "auto"
-                            ? "Auto"
-                            : theme === "light"
-                            ? "Light"
-                            : "Dark"}
-                    </span>
-                </button>
-                <button
-                    className={`nav-account ${
-                        route === "account" ? "active" : ""
-                    }`}
-                    onClick={() => handleGo("account")}
-                >
-                    <CircleUserRound size={18} />
-                    <span>Account</span>
-                </button>
+                        )}
+                        <button
+                            className="nav-account theme-toggle"
+                            onClick={() => onTheme(nextTheme(theme))}
+                            title={`Color theme: ${theme}`}
+                            aria-label="Change color theme"
+                        >
+                            <span className="sr-only">Color theme</span>
+                            {theme === "dark" ? (
+                                <Moon size={18} />
+                            ) : theme === "light" ? (
+                                <Sun size={18} />
+                            ) : (
+                                <Monitor size={18} />
+                            )}
+                            <span>
+                                {theme === "auto"
+                                    ? "Auto"
+                                    : theme === "light"
+                                    ? "Light"
+                                    : "Dark"}
+                            </span>
+                        </button>
+                        <button
+                            className={`nav-account ${
+                                route === "account" ? "active" : ""
+                            }`}
+                            onClick={() => handleGo("account")}
+                        >
+                            <CircleUserRound size={18} />
+                            <span>Account</span>
+                        </button>
+                    </div>
                 </div>
-            </div>
-        </header>
+            </header>
+            <nav className="tabbar" aria-label="Primary navigation mobile">
+                {links.map((link) => {
+                    const Icon = link.icon;
+                    const active = isActive(link.id);
+                    return (
+                        <button
+                            key={link.id}
+                            className={`tabbar-item ${
+                                active ? "active" : ""
+                            }`}
+                            onClick={() => handleGo(link.id)}
+                            aria-current={active ? "page" : undefined}
+                        >
+                            <Icon
+                                size={22}
+                                aria-hidden="true"
+                            />
+                            <span>{link.label}</span>
+                        </button>
+                    );
+                })}
+            </nav>
+        </>
     );
 }
 function getResumeVideo(allVideos: any[], bootVideos: Bootstrap["videos"]) {
@@ -2590,6 +2813,7 @@ function Practice({
                 </span>
             </div>
             {questions.length ? (
+                <>
                 <section
                     className="problem-list question-table"
                     aria-label="Available questions"
@@ -2694,6 +2918,67 @@ function Practice({
                         </tbody>
                     </table>
                 </section>
+                <ol className="question-cards" aria-label="Available questions">
+                    {questions.map((question) => {
+                        const status = questionStatus(
+                            question,
+                            attempted,
+                            completed,
+                            bookmarked
+                        );
+                        const solution = solutionKind(question);
+                        return (
+                            <li key={question.id}>
+                                <button
+                                    className="question-card"
+                                    onClick={() =>
+                                        navigateToQuestion(
+                                            question.id,
+                                            subject
+                                        )
+                                    }
+                                    aria-label={`Open ${question.title} — ${status}, ${question.difficulty ?? "Mixed"}`}
+                                >
+                                    <span className="question-card-title">
+                                        <MathText value={question.title} />
+                                    </span>
+                                    <span className="question-card-meta">
+                                        <span
+                                            className={`difficulty ${(
+                                                question.difficulty ?? "mixed"
+                                            ).toLowerCase()}`}
+                                        >
+                                            {question.difficulty ?? "Mixed"}
+                                        </span>
+                                        <span
+                                            className={`solution-status ${solution}`}
+                                        >
+                                            {solution === "none"
+                                                ? "No solution"
+                                                : solution === "video"
+                                                ? "Video"
+                                                : "Written"}
+                                        </span>
+                                        <span className="question-status-tag">
+                                            <span
+                                                className={`status-dot ${status.toLowerCase()}`}
+                                            />
+                                            {status}
+                                        </span>
+                                    </span>
+                                    {question.category && (
+                                        <span className="question-card-cat">
+                                            {question.category} ·{" "}
+                                            {questionTypeTag(question.type) ??
+                                                question.type}
+                                        </span>
+                                    )}
+                                </button>
+                            </li>
+                        );
+                    })}
+                </ol>
+                </>
             ) : (
                 <section className="empty question-empty">
                     <BookOpen size={30} />

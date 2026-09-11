@@ -1,20 +1,71 @@
 {
+    "id": "/",
     "name": "GRE Study Desk",
     "short_name": "GRE Desk",
+    "description": "Quant and Verbal lessons, practice questions and vocabulary mountains. Works offline.",
     "start_url": "/",
+    "scope": "/",
     "display": "standalone",
+    "display_override": ["window-controls-overlay", "standalone"],
+    "orientation": "any",
     "background_color": "#f5f1e8",
     "theme_color": "#183d37",
+    "categories": ["education"],
+    "lang": "en",
+    "dir": "ltr",
     "icons": [
         {
             "src": "/icons/icon-192.png",
             "sizes": "192x192",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any"
         },
         {
             "src": "/icons/icon-512.png",
             "sizes": "512x512",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/icons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "/icons/apple-touch-icon.png",
+            "sizes": "180x180",
+            "type": "image/png",
+            "purpose": "any"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Continue learning",
+            "short_name": "Learn",
+            "description": "Resume Quant and Verbal lessons",
+            "url": "/learn",
+            "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+        },
+        {
+            "name": "Practice questions",
+            "short_name": "Practice",
+            "description": "Work practice questions",
+            "url": "/practice",
+            "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+        },
+        {
+            "name": "Memorize vocabulary",
+            "short_name": "Memorize",
+            "description": "Review vocabulary mountains",
+            "url": "/memorize",
+            "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
         }
     ]
 }

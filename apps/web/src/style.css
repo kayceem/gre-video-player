@@ -4559,4 +4559,499 @@ body {
     margin: 0 0 16px;
 }
 
+/* ==========================================================================
+   Responsive overhaul + PWA layer (mobile-first overrides, appended 2026)
+   Targets: 360px phones → tablets → desktop. Bottom tab bar replaces the
+   hamburger menu on mobile for thumb reach.
+   ========================================================================== */
+:root {
+    --tabbar-height: calc(64px + env(safe-area-inset-bottom));
+    --content-max: 1360px;
+}
+html {
+    -webkit-text-size-adjust: 100%;
+    scroll-padding-top: 76px;
+}
+html,
+body {
+    overflow-x: clip;
+}
+body {
+    min-height: 100dvh;
+}
+img,
+video,
+svg:not(.katex svg),
+canvas,
+iframe,
+table {
+    max-width: 100%;
+}
+input,
+select,
+textarea {
+    font-size: 16px;
+}
+@media (min-width: 761px) {
+    input,
+    select,
+    textarea {
+        font-size: inherit;
+    }
+}
+.skip-link {
+    position: absolute;
+    left: 12px;
+    top: -60px;
+    z-index: 200;
+    background: var(--accent);
+    color: #fff;
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: top 0.15s ease;
+}
+.skip-link:focus-visible {
+    top: 12px;
+}
+
+/* Offline + PWA surfaces */
+.offline-bar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.pwa-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+    padding: 12px 12px 12px 14px;
+    margin: 14px 0;
+}
+.pwa-banner-icon {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    flex: 0 0 auto;
+}
+.pwa-banner p {
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.pwa-banner p strong {
+    color: var(--text-strong);
+    font-size: 14px;
+}
+.pwa-install {
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    padding: 12px 16px;
+    min-height: 44px;
+    white-space: nowrap;
+}
+.pwa-dismiss {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 10px;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+}
+.pwa-ios-hint {
+    background: var(--accent-soft);
+    color: var(--accent-text-strong);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 13px;
+    margin: 14px 0 0;
+}
+.pwa-update {
+    position: sticky;
+    top: 76px;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--text-strong);
+    color: #fff;
+    border-radius: 12px;
+    padding: 10px 12px 10px 14px;
+    margin: 14px 0;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: var(--shadow-dialog-in);
+}
+.pwa-update button {
+    margin-left: auto;
+    border: 0;
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text-strong);
+    font-weight: 800;
+    padding: 10px 12px;
+    min-height: 44px;
+}
+
+/* Bottom tab bar (mobile only) */
+.tabbar {
+    display: none;
+}
+.nav-hamburger {
+    display: none !important;
+}
+
+/* Practice cards (mobile) vs table (desktop) */
+.question-cards {
+    display: none;
+    list-style: none;
+    margin: 16px 0 0;
+    padding: 0;
+    gap: 10px;
+}
+.question-card {
+    width: 100%;
+    text-align: left;
+    display: grid;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    padding: 14px;
+    min-height: 48px;
+    color: var(--text-body);
+    box-shadow: var(--shadow-card);
+}
+.question-card:active {
+    transform: scale(0.99);
+}
+.question-card-title {
+    font-weight: 750;
+    color: var(--text-strong);
+    font-size: 15px;
+    line-height: 1.4;
+    display: block;
+}
+.question-card-title .rich-text {
+    font-size: 15px;
+}
+.question-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+.question-card-cat {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-weight: 600;
+}
+
+/* Fluid media + math safety */
+.video-frame,
+.library-player .video-js {
+    width: 100%;
+}
+.rich-text img,
+.question-focus img,
+.lesson-detail img,
+.definition-box img {
+    height: auto;
+}
+.katex-display {
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Touch targets: ensure tappable controls meet 44px on coarse pointers */
+@media (pointer: coarse) {
+    .nav-links button,
+    .subject-switch button,
+    .view-switch button,
+    .tabs button,
+    .lesson-row,
+    .choice,
+    .table-sort,
+    .clear-filters,
+    .random-problem,
+    .reset-progress,
+    .solution-button,
+    .bookmark {
+        min-height: 44px;
+    }
+}
+
+@media (max-width: 760px) {
+    .site-nav {
+        position: sticky;
+        top: 0;
+    }
+    .nav-inner {
+        height: 60px;
+        min-height: 60px;
+        padding: 8px 16px;
+        gap: 10px;
+    }
+    .nav-links,
+    .nav-util .theme-toggle span:last-child,
+    .nav-util .nav-account span,
+    .nav-util .install-btn {
+        display: none;
+    }
+    .nav-util {
+        margin-left: auto;
+        display: flex;
+    }
+    .nav-util .nav-account {
+        border: 0;
+        padding: 10px;
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+    }
+    .brand {
+        font-size: 16px;
+    }
+    /* Bottom tab bar */
+    .tabbar {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 60;
+        background: var(--surface);
+        border-top: 1px solid var(--border-strong);
+        padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+        box-shadow: 0 -8px 24px rgba(15, 24, 48, 0.1);
+    }
+    .tabbar-item {
+        border: 0;
+        background: transparent;
+        color: var(--text-tertiary);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 8px 2px;
+        min-height: 56px;
+        border-radius: 12px;
+    }
+    .tabbar-item.active {
+        color: var(--accent);
+        background: var(--accent-soft);
+    }
+    .page {
+        padding-bottom: calc(32px + var(--tabbar-height));
+    }
+    .pwa-update {
+        top: 66px;
+    }
+    /* Practice: cards instead of wide table */
+    .question-table {
+        display: none;
+    }
+    .question-cards {
+        display: grid;
+    }
+    .practice-title {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .practice-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+    .practice-actions .subject-switch {
+        display: flex;
+    }
+    .practice-actions .subject-switch button {
+        flex: 1;
+        min-height: 48px;
+    }
+    .practice-actions .random-problem {
+        min-height: 48px;
+        justify-content: center;
+    }
+    .problem-controls {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    .problem-controls label,
+    .problem-controls select,
+    .question-search > div {
+        min-height: 48px;
+    }
+    .filter-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        margin-left: 0;
+    }
+    .filter-actions .reset-progress {
+        grid-column: 1 / -1;
+    }
+    /* Learn + dashboard stacking */
+    .learn-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .learn-header-controls {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+    .learn-header-controls .subject-switch {
+        display: flex;
+    }
+    .learn-header-controls .subject-switch button {
+        flex: 1;
+        min-height: 48px;
+    }
+    .auto-toggles {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+    .auto-toggle-btn {
+        min-height: 48px;
+    }
+    .catalogue-filters {
+        grid-template-columns: 1fr;
+    }
+    .chapter-grid {
+        grid-template-columns: 1fr;
+    }
+    .lesson-row {
+        min-height: 48px;
+        align-items: center;
+    }
+    .question-layout {
+        grid-template-columns: 1fr;
+    }
+    .question-answer {
+        position: static;
+    }
+    .choice {
+        font-size: 16px;
+    }
+    .question-actions > .primary,
+    .solution-button,
+    .submit {
+        width: 100%;
+        min-height: 52px;
+        justify-content: center;
+    }
+    .lesson-navigation {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+    .lesson-navigation button {
+        min-height: 52px;
+        justify-content: center;
+    }
+    /* Lift floating memorize pager above the tab bar */
+    .detail-bottom-nav {
+        bottom: var(--tabbar-height) !important;
+    }
+    .memorize-shortcuts-bar {
+        bottom: calc(var(--tabbar-height) + 12px);
+    }
+    .solution-dialog-backdrop {
+        padding: 12px 12px calc(12px + var(--tabbar-height));
+    }
+}
+
+@media (min-width: 761px) {
+    .tabbar {
+        display: none;
+    }
+    .question-cards {
+        display: none;
+    }
+}
+
+@media (max-width: 380px) {
+    .page {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+    .practice-actions {
+        grid-template-columns: 1fr;
+    }
+    .filter-actions {
+        grid-template-columns: 1fr;
+    }
+    .tabbar-item {
+        font-size: 10px;
+    }
+    .page-intro h1,
+    .learn-head h1,
+    .practice-title h1 {
+        font-size: 28px;
+        letter-spacing: -0.02em;
+    }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+    .nav-inner {
+        height: 52px;
+        min-height: 52px;
+    }
+    .tabbar {
+        grid-template-columns: repeat(5, 1fr);
+        padding-top: 2px;
+    }
+    .tabbar-item {
+        min-height: 48px;
+        font-size: 10px;
+    }
+    .video-frame {
+        max-height: 56vh;
+    }
+    .video-frame .video-js {
+        max-height: 56vh;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
 

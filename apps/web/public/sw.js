@@ -1,10 +1,121 @@
-const SHELL = "gre-desk-shell-v3";
-const catalogName = request => `gre-desk-catalog-${new URL(request.url).pathname}`;
-self.addEventListener("install", event => event.waitUntil(caches.open(SHELL).then(cache => cache.addAll(["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"])).then(() => self.skipWaiting())));
-self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
-self.addEventListener("fetch", event => {
-  const { request } = event; const url = new URL(request.url);
-  if (request.method !== "GET" || url.pathname.startsWith("/api/media/")) return;
-  if (url.pathname.startsWith("/api/catalog/")) { event.respondWith(caches.open(catalogName(request)).then(async cache => { try { const network = await fetch(request); if (network.ok) cache.put(request, network.clone()); return network; } catch { const hit = await cache.match(request); if (hit) return hit; throw new Error("Catalog unavailable offline"); } })); return; }
-  if (url.origin === location.origin && request.headers.get("accept")?.includes("text/html")) event.respondWith(fetch(request).catch(() => caches.match("/")));
+/* GRE Study Desk service worker — offline-first app shell + catalogs.
+ * Strategies:
+ *  - App shell / navigations: network-first, fallback to cache, then /offline.html
+ *  - Same-origin static assets (js/css/fonts/img/json under /data,/icons,/assets): stale-while-revalidate
+ *  - /api/catalog + /data/*.json: stale-while-revalidate (IndexedDB in app is source of truth for full offline)
+ *  - /api/media (video): never cache (range requests + large files); let it fail offline with app UI message
+ *  - Mutations (POST/PUT/DELETE): never cache; app queues them in IndexedDB
+ */
+const VERSION = "gre-desk-v4";
+const SHELL = `${VERSION}-shell`;
+const STATIC = `${VERSION}-static`;
+const DATA = `${VERSION}-data`;
+const PRECACHE = ["/", "/offline.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon.svg"];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(SHELL).then((cache) => cache.addAll(PRECACHE)).then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys.filter((k) => !k.startsWith("gre-desk-v4")).map((k) => caches.delete(k))
+      );
+      await self.clients.claim();
+      if ("navigationPreload" in self.registration) {
+        try { await self.registration.navigationPreload.enable(); } catch {}
+      }
+    })()
+  );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
+});
+
+const isNavigation = (request) =>
+  request.mode === "navigate" ||
+  (request.method === "GET" && request.headers.get("accept")?.includes("text/html"));
+
+async function networkFirstNavigation(event) {
+  const cache = await caches.open(SHELL);
+  try {
+    const preload = await event.preloadResponse;
+    if (preload) {
+      cache.put(event.request, preload.clone()).catch(() => {});
+      return preload;
+    }
+    const network = await fetch(event.request);
+    if (network.ok) cache.put(event.request, network.clone()).catch(() => {});
+    return network;
+  } catch {
+    const hit = await cache.match(event.request).catch(() => null)
+      || await cache.match("/").catch(() => null);
+    return hit || caches.match("/offline.html");
+  }
+}
+
+async function staleWhileRevalidate(event, cacheName) {
+  const cache = await caches.open(cacheName);
+  const hit = await cache.match(event.request).catch(() => null);
+  const network = fetch(event.request).then((res) => {
+    if (res.ok) cache.put(event.request, res.clone()).catch(() => {});
+    return res;
+  }).catch(() => null);
+  return hit || network || Promise.reject(new Error("offline"));
+}
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  const url = new URL(request.url);
+  if (request.method !== "GET") return;
+  // Never intercept media streams or mutations.
+  if (url.pathname.startsWith("/api/media/")) return;
+  if (url.pathname.startsWith("/api/audio-proxy")) return;
+
+  // Navigations: network-first with offline fallback.
+  if (isNavigation(request) && url.origin === location.origin) {
+    event.respondWith(networkFirstNavigation(event));
+    return;
+  }
+
+  if (url.origin !== location.origin) {
+    // Third-party (fonts/CDN): cache-first,  no failure when offline.
+    if (url.hostname.includes("fonts.g")) {
+      event.respondWith(
+        caches.open(STATIC).then(async (cache) => {
+          const hit = await cache.match(request).catch(() => null);
+          if (hit) return hit;
+          try {
+            const res = await fetch(request);
+            if (res.ok) cache.put(request, res.clone()).catch(() => {});
+            return res;
+          } catch { return hit || Response.error(); }
+        })
+      );
+    }
+    return;
+  }
+
+  // Catalog JSON + memorize data: SWR so offline still works.
+  if (url.pathname.startsWith("/api/catalog/") || url.pathname.startsWith("/data/")) {
+    event.respondWith(
+      staleWhileRevalidate(event, DATA).catch(() => caches.match("/offline.html"))
+    );
+    return;
+  }
+
+  // App static assets + icons + manifest: SWR.
+  if (
+    url.pathname.startsWith("/assets/") ||
+    url.pathname.startsWith("/icons/") ||
+    /\.(js|css|woff2?|ttf|png|svg|ico|json|webmanifest)$/.test(url.pathname)
+  ) {
+    event.respondWith(staleWhileRevalidate(event, STATIC));
+    return;
+  }
 });
