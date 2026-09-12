@@ -305,7 +305,6 @@ export function Memorize({
             }
         }
         setStatuses(newStatuses);
-        setSelectedIndex(0);
         if (localProgressToSync.length) {
             onProgress(mergedProgress);
             localProgressToSync.forEach((record) =>

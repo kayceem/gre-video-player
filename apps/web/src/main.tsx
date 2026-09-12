@@ -17,14 +17,18 @@ import {
     ChevronRight,
     CircleUserRound,
     Download,
+    FastForward,
     Gauge,
     House,
     LogOut,
+    Maximize,
+    Minimize,
     Monitor,
     Moon,
     Pause,
     Play,
     RefreshCw,
+    Rewind,
     Search,
     SkipForward,
     SlidersHorizontal,
@@ -42,6 +46,7 @@ import type {
     Subject,
     VideoCatalogEnvelope,
 } from "@gre/contracts";
+import type { MountainData, MountainItem } from "./mountain-types";
 import "katex/dist/katex.min.css";
 import "video.js/dist/video-js.css";
 import "./style.css";
@@ -272,6 +277,368 @@ export function Html({ value }: { value: string }) {
         <div
             className="rich-text"
             dangerouslySetInnerHTML={{ __html: renderMath(value) }}
+        />
+    );
+}
+
+type VocabularyIndex = {
+    byTerm: Map<string, MountainItem>;
+    bySlug: Map<string, MountainItem>;
+};
+const emptyVocabularyIndex = (): VocabularyIndex => ({
+    byTerm: new Map(),
+    bySlug: new Map(),
+});
+const normalizeVocabularyTerm = (value: string) =>
+    value
+        .trim()
+        .toLocaleLowerCase()
+        .replace(/[’‘]/g, "'")
+        .replace(/\s+/g, " ");
+const escapeRegExp = (value: string) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+type VocabularyPartOfSpeech = "verb" | "noun" | "adjective" | "adverb";
+
+const irregularVerbForms: Record<string, string[]> = {
+    abide: ["abides", "abode", "abided", "abiding"],
+    be: ["am", "is", "are", "was", "were", "been", "being"],
+    become: ["becomes", "became", "become", "becoming"],
+    begin: ["begins", "began", "begun", "beginning"],
+    break: ["breaks", "broke", "broken", "breaking"],
+    bring: ["brings", "brought", "bringing"],
+    build: ["builds", "built", "building"],
+    buy: ["buys", "bought", "buying"],
+    catch: ["catches", "caught", "catching"],
+    choose: ["chooses", "chose", "chosen", "choosing"],
+    come: ["comes", "came", "coming"],
+    do: ["does", "did", "done", "doing"],
+    draw: ["draws", "drew", "drawn", "drawing"],
+    drink: ["drinks", "drank", "drunk", "drinking"],
+    drive: ["drives", "drove", "driven", "driving"],
+    eat: ["eats", "ate", "eaten", "eating"],
+    fall: ["falls", "fell", "fallen", "falling"],
+    feel: ["feels", "felt", "feeling"],
+    fight: ["fights", "fought", "fighting"],
+    find: ["finds", "found", "finding"],
+    fly: ["flies", "flew", "flown", "flying"],
+    forbear: ["forbears", "forbore", "forborne", "forbearing"],
+    forget: ["forgets", "forgot", "forgotten", "forgetting"],
+    forgive: ["forgives", "forgave", "forgiven", "forgiving"],
+    forsake: ["forsakes", "forsook", "forsaken", "forsaking"],
+    freeze: ["freezes", "froze", "frozen", "freezing"],
+    get: ["gets", "got", "gotten", "getting"],
+    give: ["gives", "gave", "given", "giving"],
+    go: ["goes", "went", "gone", "going"],
+    grow: ["grows", "grew", "grown", "growing"],
+    have: ["has", "had", "having"],
+    hear: ["hears", "heard", "hearing"],
+    hide: ["hides", "hid", "hidden", "hiding"],
+    hold: ["holds", "held", "holding"],
+    keep: ["keeps", "kept", "keeping"],
+    know: ["knows", "knew", "known", "knowing"],
+    lead: ["leads", "led", "leading"],
+    leave: ["leaves", "left", "leaving"],
+    lend: ["lends", "lent", "lending"],
+    lie: ["lies", "lay", "lain", "lying"],
+    lose: ["loses", "lost", "losing"],
+    make: ["makes", "made", "making"],
+    mean: ["means", "meant", "meaning"],
+    meet: ["meets", "met", "meeting"],
+    pay: ["pays", "paid", "paying"],
+    put: ["puts", "putting"],
+    read: ["reads", "read", "reading"],
+    ride: ["rides", "rode", "ridden", "riding"],
+    rise: ["rises", "rose", "risen", "rising"],
+    run: ["runs", "ran", "running"],
+    say: ["says", "said", "saying"],
+    see: ["sees", "saw", "seen", "seeing"],
+    sell: ["sells", "sold", "selling"],
+    send: ["sends", "sent", "sending"],
+    set: ["sets", "setting"],
+    shake: ["shakes", "shook", "shaken", "shaking"],
+    sing: ["sings", "sang", "sung", "singing"],
+    sink: ["sinks", "sank", "sunk", "sinking"],
+    sit: ["sits", "sat", "sitting"],
+    sleep: ["sleeps", "slept", "sleeping"],
+    speak: ["speaks", "spoke", "spoken", "speaking"],
+    spend: ["spends", "spent", "spending"],
+    stand: ["stands", "stood", "standing"],
+    steal: ["steals", "stole", "stolen", "stealing"],
+    swim: ["swims", "swam", "swum", "swimming"],
+    take: ["takes", "took", "taken", "taking"],
+    teach: ["teaches", "taught", "teaching"],
+    tear: ["tears", "tore", "torn", "tearing"],
+    tell: ["tells", "told", "telling"],
+    think: ["thinks", "thought", "thinking"],
+    throw: ["throws", "threw", "thrown", "throwing"],
+    understand: ["understands", "understood", "understanding"],
+    wake: ["wakes", "woke", "woken", "waking"],
+    wear: ["wears", "wore", "worn", "wearing"],
+    win: ["wins", "won", "winning"],
+    withstand: ["withstands", "withstood", "withstanding"],
+    write: ["writes", "wrote", "written", "writing"],
+};
+
+const irregularNounForms: Record<string, string[]> = {
+    analysis: ["analyses"],
+    axis: ["axes"],
+    basis: ["bases"],
+    cactus: ["cacti", "cactuses"],
+    crisis: ["crises"],
+    diagnosis: ["diagnoses"],
+    emphasis: ["emphases"],
+    hypothesis: ["hypotheses"],
+    index: ["indices", "indexes"],
+    oasis: ["oases"],
+    parenthesis: ["parentheses"],
+    phenomenon: ["phenomena"],
+    stimulus: ["stimuli", "stimuluses"],
+    synopsis: ["synopses"],
+    thesis: ["theses"],
+    criterion: ["criteria"],
+    child: ["children"],
+    man: ["men"],
+    person: ["people"],
+    woman: ["women"],
+};
+
+const shouldDoubleFinalConsonant = (word: string) => {
+    if (
+        new Set([
+            "abet",
+            "begin",
+            "commit",
+            "control",
+            "defer",
+            "equip",
+            "excel",
+            "forget",
+            "occur",
+            "omit",
+            "outstrip",
+            "permit",
+            "prefer",
+            "propel",
+            "refer",
+            "regret",
+            "submit",
+            "transmit",
+            "travel",
+        ]).has(word)
+    )
+        return true;
+    return (
+        word.length <= 5 &&
+        /[^aeiou][aeiou][^aeiouwxy]$/i.test(word) &&
+        !/(.)\1$/i.test(word)
+    );
+};
+
+const regularVerbForms = (word: string) => {
+    const forms = new Set<string>();
+    if (/[^aeiou]y$/i.test(word)) forms.add(`${word.slice(0, -1)}ies`);
+    else if (/(s|x|z|ch|sh|o)$/i.test(word)) forms.add(`${word}es`);
+    else forms.add(`${word}s`);
+
+    if (/[^aeiou]y$/i.test(word)) forms.add(`${word.slice(0, -1)}ied`);
+    else if (word.endsWith("e")) forms.add(`${word}d`);
+    else if (shouldDoubleFinalConsonant(word))
+        forms.add(`${word}${word.at(-1)}ed`);
+    else forms.add(`${word}ed`);
+
+    if (word.endsWith("ie")) forms.add(`${word.slice(0, -2)}ying`);
+    else if (word.endsWith("e") && !word.endsWith("ee"))
+        forms.add(`${word.slice(0, -1)}ing`);
+    else if (shouldDoubleFinalConsonant(word))
+        forms.add(`${word}${word.at(-1)}ing`);
+    else forms.add(`${word}ing`);
+    return forms;
+};
+
+const regularNounForms = (word: string) => {
+    if (/[^aeiou]y$/i.test(word)) return [`${word.slice(0, -1)}ies`];
+    if (/(s|x|z|ch|sh)$/i.test(word)) return [`${word}es`];
+    if (/[^f]fe?$/i.test(word))
+        return [`${word.slice(0, -1)}ves`, `${word}s`];
+    return [`${word}s`];
+};
+
+const adjectiveAdverbForm = (word: string) => {
+    if (word.endsWith("y")) return `${word.slice(0, -1)}ily`;
+    if (word.endsWith("ic")) return `${word}ally`;
+    if (word.endsWith("e")) return `${word.slice(0, -1)}ly`;
+    return `${word}ly`;
+};
+
+const adjectiveComparisonForms = (word: string) => {
+    if (
+        word.length > 7 ||
+        /(ous|ful|ive|al|ic|ent|ant|able|ible|ish|less)$/i.test(word)
+    )
+        return [];
+    if (/[^aeiou]y$/i.test(word))
+        return [`${word.slice(0, -1)}ier`, `${word.slice(0, -1)}iest`];
+    if (word.endsWith("e")) return [`${word}r`, `${word}st`];
+    if (shouldDoubleFinalConsonant(word))
+        return [
+            `${word}${word.at(-1)}er`,
+            `${word}${word.at(-1)}est`,
+        ];
+    return [`${word}er`, `${word}est`];
+};
+
+function vocabularyPartsOfSpeech(item: MountainItem) {
+    const parts = new Set<VocabularyPartOfSpeech>();
+    for (const match of item.description.matchAll(
+        /\b(verb|noun|adjective|adverb)\s*:/gi
+    )) {
+        parts.add(match[1].toLowerCase() as VocabularyPartOfSpeech);
+    }
+    return parts;
+}
+
+function vocabularyInflectedForms(
+    term: string,
+    parts: Set<VocabularyPartOfSpeech>
+) {
+    const forms = new Set<string>([term]);
+    const head = term.split(" ")[0];
+    const withHead = (form: string) =>
+        term === head ? form : `${form}${term.slice(head.length)}`;
+    const addForms = (values: string[]) =>
+        values.forEach((value) => forms.add(normalizeVocabularyTerm(withHead(value))));
+
+    if (parts.has("verb")) {
+        const irregular = irregularVerbForms[head];
+        addForms(irregular ?? [...regularVerbForms(head)]);
+    }
+    if (parts.has("noun")) {
+        const irregular = irregularNounForms[head];
+        addForms(irregular ?? regularNounForms(head));
+    }
+    if (parts.has("adjective")) {
+        addForms([adjectiveAdverbForm(head)]);
+        addForms(adjectiveComparisonForms(head));
+    }
+    return forms;
+}
+
+function createVocabularyIndex(data: MountainData): VocabularyIndex {
+    const byTerm = new Map<string, MountainItem>();
+    const bySlug = new Map<string, MountainItem>();
+    const items = data.mountain_categories.flatMap(
+        (category) => category.mountain_contents
+    );
+    items.forEach((item) => {
+        const term = normalizeVocabularyTerm(item.title);
+        if (!byTerm.has(term)) byTerm.set(term, item);
+        bySlug.set(item.slug, item);
+    });
+    items.forEach((item) => {
+        const term = normalizeVocabularyTerm(item.title);
+        vocabularyInflectedForms(term, vocabularyPartsOfSpeech(item)).forEach(
+            (form) => {
+                if (!byTerm.has(form)) byTerm.set(form, item);
+            }
+        );
+    });
+    return { byTerm, bySlug };
+}
+function decorateVocabularyHtml(value: string, vocabulary: VocabularyIndex) {
+    const html = renderMath(value);
+    if (!vocabulary.byTerm.size || typeof DOMParser === "undefined") return html;
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = html;
+    const terms = [...vocabulary.byTerm.keys()]
+        .sort((a, b) => b.length - a.length)
+        .map((term) => escapeRegExp(term).replace(/ /g, "\\s+"));
+    if (!terms.length) return html;
+    const pattern = new RegExp(
+        `(^|[^\\p{L}\\p{N}])(${terms.join("|")})(?![\\p{L}\\p{N}])`,
+        "giu"
+    );
+    const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    let node = walker.nextNode();
+    while (node) {
+        textNodes.push(node as Text);
+        node = walker.nextNode();
+    }
+    textNodes.forEach((textNode) => {
+        const parent = textNode.parentElement;
+        if (
+            !parent ||
+            parent.closest(".katex, script, style, [data-vocab-slug]")
+        )
+            return;
+        const text = textNode.nodeValue ?? "";
+        pattern.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        let lastIndex = 0;
+        let changed = false;
+        const fragment = document.createDocumentFragment();
+        while ((match = pattern.exec(text))) {
+            const prefix = match[1] ?? "";
+            const item = vocabulary.byTerm.get(
+                normalizeVocabularyTerm(match[2] ?? "")
+            );
+            if (!item) continue;
+            changed = true;
+            if (match.index > lastIndex) {
+                fragment.append(text.slice(lastIndex, match.index));
+            }
+            if (prefix) fragment.append(prefix);
+            const word = document.createElement("span");
+            word.className = "vocab-word";
+            word.dataset.vocabSlug = item.slug;
+            word.textContent = match[2] ?? "";
+            fragment.append(word);
+            lastIndex = match.index + match[0].length;
+        }
+        if (!changed) return;
+        if (lastIndex < text.length) fragment.append(text.slice(lastIndex));
+        textNode.replaceWith(fragment);
+    });
+    return wrapper.innerHTML;
+}
+function VocabularyHtml({
+    value,
+    vocabulary,
+    onWordClick,
+    onWordDoubleClick,
+}: {
+    value: string;
+    vocabulary: VocabularyIndex;
+    onWordClick?: (item: MountainItem, anchor: HTMLElement) => void;
+    onWordDoubleClick?: (item: MountainItem, anchor: HTMLElement) => void;
+}) {
+    const html = useMemo(
+        () => decorateVocabularyHtml(value, vocabulary),
+        [value, vocabulary]
+    );
+    const handleWordEvent = (
+        event: React.MouseEvent<HTMLDivElement>,
+        callback?: (item: MountainItem, anchor: HTMLElement) => void
+    ) => {
+        if (!callback) return;
+        const target = event.target as HTMLElement | null;
+        const anchor = target?.closest<HTMLElement>("[data-vocab-slug]");
+        if (!anchor || !event.currentTarget.contains(anchor)) return;
+        const item = vocabulary.bySlug.get(anchor.dataset.vocabSlug ?? "");
+        if (!item) return;
+        event.preventDefault();
+        event.stopPropagation();
+        callback(item, anchor);
+    };
+    return (
+        <div
+            className="rich-text vocabulary-rich-text"
+            onClick={(event) => handleWordEvent(event, onWordClick)}
+            onDoubleClick={(event) =>
+                handleWordEvent(event, onWordDoubleClick)
+            }
+            dangerouslySetInnerHTML={{ __html: html }}
         />
     );
 }
@@ -1422,52 +1789,7 @@ function Dashboard({
 }
 let videojsLoader: Promise<any> | undefined;
 const loadVideojs = () =>
-    (videojsLoader ??= import("video.js").then(({ default: videojs }) => {
-        const VideoJsButton = videojs.getComponent("Button") as any;
-        if (!videojs.getComponent("SkipBackButton")) {
-            class SkipBackButton extends VideoJsButton {
-                constructor(player: any, options: any) {
-                    super(player, options);
-                    this.controlText("Go back 10 seconds");
-                    this.el().textContent = "Back 10";
-                }
-                buildCSSClass() {
-                    return "vjs-skip-back-button vjs-control vjs-button";
-                }
-                handleClick() {
-                    this.player().currentTime(
-                        Math.max(0, this.player().currentTime() - 10)
-                    );
-                }
-            }
-            videojs.registerComponent("SkipBackButton", SkipBackButton as any);
-        }
-        if (!videojs.getComponent("SkipForwardButton")) {
-            class SkipForwardButton extends VideoJsButton {
-                constructor(player: any, options: any) {
-                    super(player, options);
-                    this.controlText("Skip forward 10 seconds");
-                    this.el().textContent = "Forward 10";
-                }
-                buildCSSClass() {
-                    return "vjs-skip-forward-button vjs-control vjs-button";
-                }
-                handleClick() {
-                    this.player().currentTime(
-                        Math.min(
-                            this.player().duration() || 0,
-                            this.player().currentTime() + 10
-                        )
-                    );
-                }
-            }
-            videojs.registerComponent(
-                "SkipForwardButton",
-                SkipForwardButton as any
-            );
-        }
-        return videojs;
-    }));
+    (videojsLoader ??= import("video.js").then(({ default: videojs }) => videojs));
 type LessonPlayerProps = {
     videoId: string;
     src: string;
@@ -1515,13 +1837,37 @@ function LessonPlayer(props: LessonPlayerProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const playerRef = useRef<any>(null);
     const [loading, setLoading] = useState(true),
-        [error, setError] = useState<string | null>(null);
+        [error, setError] = useState<string | null>(null),
+        [playing, setPlaying] = useState(false),
+        [isFullscreen, setIsFullscreen] = useState(false),
+        [controlsVisible, setControlsVisible] = useState(true);
     const shouldAutoPlay = useRef(false);
+    const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const showControls = useCallback(() => {
+        setControlsVisible(true);
+        if (controlsTimerRef.current) {
+            clearTimeout(controlsTimerRef.current);
+        }
+        controlsTimerRef.current = setTimeout(() => {
+            setControlsVisible(false);
+            controlsTimerRef.current = null;
+        }, 2000);
+    }, []);
+    useEffect(() => {
+        showControls();
+        return () => {
+            if (controlsTimerRef.current) {
+                clearTimeout(controlsTimerRef.current);
+                controlsTimerRef.current = null;
+            }
+        };
+    }, [videoId, showControls]);
     useEffect(() => {
         const host = hostRef.current;
         if (!host) return;
         let disposed = false;
         let player: any;
+        let removeFullscreenListeners = () => {};
         setLoading(true);
         setError(null);
 
@@ -1538,8 +1884,6 @@ function LessonPlayer(props: LessonPlayerProps) {
                     controlBar: {
                         children: [
                             "playToggle",
-                            "SkipBackButton",
-                            "SkipForwardButton",
                             "currentTimeDisplay",
                             "progressControl",
                             "durationDisplay",
@@ -1552,29 +1896,43 @@ function LessonPlayer(props: LessonPlayerProps) {
 
                 player.requestFullscreen = function () {
                     const el = containerRef.current;
-                    if (el) {
-                        if (el.requestFullscreen) {
-                            el.requestFullscreen().catch(() => {});
-                        } else if ("webkitRequestFullscreen" in el) {
-                            (el as any).webkitRequestFullscreen();
-                        }
+                    const media = el?.querySelector("video") as any;
+                    if (!el) return;
+                    if (media?.webkitEnterFullscreen) {
+                        media.webkitEnterFullscreen();
+                    } else if (el.requestFullscreen) {
+                        el.requestFullscreen().catch(() => {});
+                    } else if ("webkitRequestFullscreen" in el) {
+                        (el as any).webkitRequestFullscreen();
                     }
                 };
 
                 player.exitFullscreen = function () {
-                    if (document.fullscreenElement) {
+                    const media = containerRef.current?.querySelector(
+                        "video"
+                    ) as any;
+                    if (document.fullscreenElement && document.exitFullscreen) {
                         document.exitFullscreen().catch(() => {});
+                    } else if ((document as any).webkitFullscreenElement) {
+                        (document as any).webkitExitFullscreen?.();
+                    } else if (media?.webkitExitFullscreen) {
+                        media.webkitExitFullscreen();
                     }
                 };
 
                 player.isFullscreen = function () {
+                    const media = containerRef.current?.querySelector(
+                        "video"
+                    ) as any;
                     return Boolean(
                         document.fullscreenElement &&
                             (document.fullscreenElement ===
                                 containerRef.current ||
                                 containerRef.current?.contains(
                                     document.fullscreenElement
-                                ))
+                                )) ||
+                            (document as any).webkitFullscreenElement ||
+                            media?.webkitDisplayingFullscreen
                     );
                 };
 
@@ -1604,6 +1962,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                 player.on("waiting", () => setLoading(true));
                 player.on("playing", () => setLoading(false));
                 player.on("play", () => {
+                    setPlaying(true);
                     const current = media();
                     if (current) onPlay(current);
                 });
@@ -1612,6 +1971,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                     if (current) onTimeUpdate(current);
                 });
                 player.on("pause", () => {
+                    setPlaying(false);
                     const current = media();
                     if (current) onPause(current);
                 });
@@ -1632,14 +1992,35 @@ function LessonPlayer(props: LessonPlayerProps) {
                 player.src({ src, type: "video/mp4" });
 
                 const onFsChange = () => {
-                    if (playerRef.current)
+                    setIsFullscreen(Boolean(player.isFullscreen()));
+                    if (playerRef.current) {
                         playerRef.current.trigger("fullscreenchange");
+                    }
                 };
                 document.addEventListener("fullscreenchange", onFsChange);
-
-                return () => {
+                document.addEventListener(
+                    "webkitfullscreenchange",
+                    onFsChange as EventListener
+                );
+                player.on("loadedmetadata", () => {
+                    if (disposed) return;
+                    const current = media() as any;
+                    current?.addEventListener("webkitbeginfullscreen", onFsChange);
+                    current?.addEventListener("webkitendfullscreen", onFsChange);
+                });
+                removeFullscreenListeners = () => {
+                    document.removeEventListener("fullscreenchange", onFsChange);
                     document.removeEventListener(
-                        "fullscreenchange",
+                        "webkitfullscreenchange",
+                        onFsChange as EventListener
+                    );
+                    const current = media() as any;
+                    current?.removeEventListener(
+                        "webkitbeginfullscreen",
+                        onFsChange
+                    );
+                    current?.removeEventListener(
+                        "webkitendfullscreen",
                         onFsChange
                     );
                 };
@@ -1655,6 +2036,9 @@ function LessonPlayer(props: LessonPlayerProps) {
 
         return () => {
             disposed = true;
+            removeFullscreenListeners();
+            setPlaying(false);
+            setIsFullscreen(false);
             videoRef.current = null;
             player?.dispose();
             playerRef.current = null;
@@ -1674,6 +2058,27 @@ function LessonPlayer(props: LessonPlayerProps) {
         shouldAutoPlay.current = true;
         onSelectLesson?.(lessonId);
     };
+    const togglePlay = () => {
+        const media = videoRef.current;
+        if (!media) return;
+        if (media.paused || media.ended) media.play().catch(() => {});
+        else media.pause();
+    };
+    const seekBy = (seconds: number) => {
+        const media = videoRef.current;
+        if (!media) return;
+        const duration = Number.isFinite(media.duration) ? media.duration : 0;
+        media.currentTime = Math.max(
+            0,
+            Math.min(duration || Number.MAX_SAFE_INTEGER, media.currentTime + seconds)
+        );
+    };
+    const toggleFullscreen = () => {
+        const player = playerRef.current;
+        if (!player) return;
+        if (player.isFullscreen()) player.exitFullscreen();
+        else player.requestFullscreen();
+    };
     return (
         <div
             ref={containerRef}
@@ -1681,8 +2086,69 @@ function LessonPlayer(props: LessonPlayerProps) {
                 loading ? "is-loading" : ""
             }`}
             aria-busy={loading}
+            onMouseEnter={showControls}
+            onMouseMove={showControls}
+            onTouchStart={showControls}
         >
             <div ref={hostRef} />
+            <div
+                className={`lesson-video-overlay ${
+                    controlsVisible ? "" : "controls-hidden"
+                }`}
+                aria-hidden={!controlsVisible}
+                aria-label="Video controls"
+            >
+                <div className="lesson-video-center-controls">
+                    <button
+                        type="button"
+                        className="lesson-video-control"
+                        aria-label="Back 10 seconds"
+                        title="Back 10 seconds"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            seekBy(-10);
+                        }}
+                    >
+                        <Rewind size={24} />
+                    </button>
+                    <button
+                        type="button"
+                        className="lesson-video-control lesson-video-play"
+                        aria-label={playing ? "Pause video" : "Play video"}
+                        title={playing ? "Pause" : "Play"}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            togglePlay();
+                        }}
+                    >
+                        {playing ? <Pause size={28} /> : <Play size={28} />}
+                    </button>
+                    <button
+                        type="button"
+                        className="lesson-video-control"
+                        aria-label="Forward 10 seconds"
+                        title="Forward 10 seconds"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            seekBy(10);
+                        }}
+                    >
+                        <FastForward size={24} />
+                    </button>
+                </div>
+                <button
+                    type="button"
+                    className="lesson-video-fullscreen"
+                    aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        toggleFullscreen();
+                    }}
+                >
+                    {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+                </button>
+            </div>
             {loading && <span className="video-loading">Loading lesson…</span>}
             {error && (
                 <p className="video-error" role="alert">
@@ -2364,11 +2830,15 @@ function QuestionInputs({
     selected,
     setSelected,
     feedback,
+    vocabulary,
+    onVocabularyWord,
 }: {
     question: Question;
     selected: string[];
     setSelected: (value: string[]) => void;
     feedback: any;
+    vocabulary: VocabularyIndex;
+    onVocabularyWord: (item: MountainItem, anchor: HTMLElement) => void;
 }) {
     const disabled = Boolean(feedback?.correct);
     const choose = (id: string, groupId?: string) => {
@@ -2400,14 +2870,14 @@ function QuestionInputs({
                 : [...selected, id]
         );
     };
-    const state = (id: string) =>
-        feedback
-            ? feedback.correctChoiceIds?.includes(id)
-                ? "correct"
-                : feedback.submittedChoiceIds?.includes(id)
-                ? "incorrect"
-                : ""
-            : "";
+    const state = (id: string) => {
+        if (!feedback) return "";
+        const isCorrectChoice = feedback.correctChoiceIds?.includes(id);
+        const isSubmittedChoice = feedback.submittedChoiceIds?.includes(id);
+        if (isCorrectChoice || (feedback.correct && isSubmittedChoice))
+            return "correct";
+        return isSubmittedChoice ? "incorrect" : "";
+    };
     if (question.type === "Quantitative Comparison")
         return (
             <div className="qc-input">
@@ -2507,14 +2977,25 @@ function QuestionInputs({
                     {group.choices.map((choice) => (
                         <button
                             key={choice.id}
-                            disabled={disabled}
+                            disabled={disabled && vocabulary.byTerm.size === 0}
+                            aria-disabled={disabled}
                             className={`choice ${
                                 selected.includes(choice.id) ? "chosen" : ""
-                            } ${state(choice.id)}`}
-                            onClick={() => choose(choice.id, group.id)}
+                            } ${state(choice.id)} ${
+                                disabled ? "answer-locked" : ""
+                            }`}
+                            onClick={(event) => {
+                                if (disabled) return;
+                                if (event.detail === 2) return;
+                                choose(choice.id, group.id);
+                            }}
                         >
                             <span className="choice-key">{choice.label}</span>
-                            <Html value={choice.bodyHtml} />
+                            <VocabularyHtml
+                                value={choice.bodyHtml}
+                                vocabulary={vocabulary}
+                                onWordDoubleClick={onVocabularyWord}
+                            />
                             {state(choice.id) === "correct" && (
                                 <Check size={18} />
                             )}
@@ -3290,6 +3771,14 @@ function PracticeQuestion({
     const [selected, setSelected] = useState<string[]>([]),
         [feedback, setFeedback] = useState<any>(null),
         [solutionOpen, setSolutionOpen] = useState(false);
+    const [verbalVocabulary, setVerbalVocabulary] =
+        useState<VocabularyIndex>(emptyVocabularyIndex);
+    const [vocabularyPopup, setVocabularyPopup] = useState<{
+        item: MountainItem;
+        top: number;
+        left: number;
+    } | null>(null);
+    const vocabularyPopupRef = useRef<HTMLDivElement>(null);
     const attempted = new Set(boot.attempts.map((item) => item.questionId)),
         completed = new Set(
             boot.attempts
@@ -3314,7 +3803,65 @@ function PracticeQuestion({
         setSelected([]);
         setFeedback(null);
         setSolutionOpen(false);
+        setVocabularyPopup(null);
     }, [question?.id]);
+    useEffect(() => {
+        if (questionSubject !== "verbal") {
+            setVerbalVocabulary(emptyVocabularyIndex());
+            return;
+        }
+        let cancelled = false;
+        fetch("/data/vocab_mountain.json")
+            .then((response) => {
+                if (!response.ok) throw new Error("Vocabulary unavailable");
+                return response.json() as Promise<MountainData>;
+            })
+            .then((data) => {
+                if (!cancelled) setVerbalVocabulary(createVocabularyIndex(data));
+            })
+            .catch(() => {
+                if (!cancelled) setVerbalVocabulary(emptyVocabularyIndex());
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [questionSubject]);
+    useEffect(() => {
+        if (!vocabularyPopup) return;
+        const closeOnOutsidePointer = (event: PointerEvent) => {
+            const target = event.target;
+            if (
+                !(target instanceof Node) ||
+                !vocabularyPopupRef.current?.contains(target)
+            ) {
+                setVocabularyPopup(null);
+            }
+        };
+        document.addEventListener("pointerdown", closeOnOutsidePointer);
+        return () =>
+            document.removeEventListener("pointerdown", closeOnOutsidePointer);
+    }, [vocabularyPopup]);
+    const openVocabularyPopup = (item: MountainItem, anchor: HTMLElement) => {
+        const rect = anchor.getBoundingClientRect();
+        const width = Math.min(360, window.innerWidth - 24);
+        const height = Math.min(360, window.innerHeight * 0.65);
+        const gap = 8;
+        const left = Math.max(
+            12,
+            Math.min(rect.left, window.innerWidth - width - 12)
+        );
+        const below = rect.bottom + gap;
+        const top = Math.max(
+            12,
+            Math.min(
+                below + height <= window.innerHeight - 12
+                    ? below
+                    : rect.top - height - gap,
+                window.innerHeight - height - 12
+            )
+        );
+        setVocabularyPopup({ item, top, left });
+    };
     const submit = async () => {
         if (!question) return;
         if (!user) return setFeedback({ needLogin: true });
@@ -3601,7 +4148,11 @@ function PracticeQuestion({
                     className="question-prompt"
                     aria-label="Question prompt"
                 >
-                    <Html value={question.promptHtml} />
+                    <VocabularyHtml
+                        value={question.promptHtml}
+                        vocabulary={verbalVocabulary}
+                        onWordClick={openVocabularyPopup}
+                    />
                     {question.image && (
                         <div className="question-image">
                             <img
@@ -3632,6 +4183,8 @@ function PracticeQuestion({
                         selected={selected}
                         setSelected={setSelected}
                         feedback={feedback}
+                        vocabulary={verbalVocabulary}
+                        onVocabularyWord={openVocabularyPopup}
                     />
                     <div className="question-actions">
                         <button
@@ -3659,6 +4212,33 @@ function PracticeQuestion({
                     subject={questionSubject}
                     onClose={() => setSolutionOpen(false)}
                 />
+            )}
+            {vocabularyPopup && (
+                <div
+                    ref={vocabularyPopupRef}
+                    className="vocab-definition-popup"
+                    style={{
+                        top: vocabularyPopup.top,
+                        left: vocabularyPopup.left,
+                    }}
+                    role="dialog"
+                    aria-label={`${vocabularyPopup.item.title} definition`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    <div className="vocab-popup-header">
+                        <strong>{vocabularyPopup.item.title}</strong>
+                        <button
+                            type="button"
+                            className="vocab-popup-close"
+                            aria-label="Close definition"
+                            onClick={() => setVocabularyPopup(null)}
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                    <Html value={vocabularyPopup.item.description} />
+                </div>
             )}
         </article>
     );

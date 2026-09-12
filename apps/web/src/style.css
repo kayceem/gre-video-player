@@ -390,6 +390,68 @@ button:disabled {
     max-width: 100%;
     height: auto;
 }
+.vocab-word {
+    cursor: pointer;
+    border-radius: 3px;
+    text-decoration: underline dotted var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+.vocab-word:hover,
+.vocab-word:focus-visible {
+    outline: 0;
+    background: var(--accent-soft);
+    color: var(--accent-text-strong);
+}
+.vocab-definition-popup {
+    position: fixed;
+    z-index: 220;
+    width: min(360px, calc(100vw - 24px));
+    max-height: min(360px, 65vh);
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 14px 16px 16px;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text-rich);
+    box-shadow: 0 16px 38px var(--shadow-panel);
+}
+.vocab-definition-popup::-webkit-scrollbar {
+    display: none;
+}
+.vocab-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text-strong);
+    font-size: 16px;
+}
+.vocab-popup-close {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+}
+.vocab-popup-close:hover {
+    background: var(--surface-hover);
+    color: var(--text-strong);
+}
+.vocab-definition-popup .rich-text {
+    max-width: none;
+    margin-top: 10px;
+    color: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+}
 .player-actions {
     display: flex;
     align-items: center;
@@ -892,24 +954,63 @@ button:disabled {
 .library-player .vjs-volume-level {
     background: var(--warning);
 }
+.lesson-video-overlay {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    pointer-events: none;
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+.lesson-video-overlay.controls-hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+.lesson-video-center-controls {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+}
+.lesson-video-control,
+.lesson-video-fullscreen {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
+    background: rgba(5, 10, 20, 0.64);
+    color: #fff;
+    transition: background 0.15s ease, transform 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.lesson-video-control:hover,
+.lesson-video-fullscreen:hover {
+    background: rgba(5, 10, 20, 0.86);
+    transform: scale(1.06);
+}
+.lesson-video-play {
+    width: 58px;
+    height: 58px;
+}
+.lesson-video-fullscreen {
+    position: absolute;
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    pointer-events: auto;
+}
 .library-player .vjs-slider {
     background: rgba(247, 246, 238, 0.3);
 }
 .library-player .vjs-playback-rate .vjs-playback-rate-value {
     font-size: 1.05em;
-}
-.library-player .vjs-skip-back-button,
-.library-player .vjs-skip-forward-button {
-    width: auto;
-    min-width: 4.8em;
-    padding: 0 7px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-}
-.library-player .vjs-skip-back-button:hover,
-.library-player .vjs-skip-forward-button:hover {
-    background: rgba(255, 255, 255, 0.13);
 }
 .video-error {
     position: absolute;
@@ -936,15 +1037,20 @@ button:disabled {
         padding: 0 2px;
         font-size: 10px;
     }
-    .library-player .vjs-skip-back-button,
-    .library-player .vjs-skip-forward-button {
-        min-width: 3.8em;
-        padding: 0 3px;
-        font-size: 8px;
-    }
     .library-player .vjs-current-time,
     .library-player .vjs-duration {
         display: none;
+    }
+    .lesson-video-center-controls {
+        gap: 12px;
+    }
+    .lesson-video-control {
+        width: 42px;
+        height: 42px;
+    }
+    .lesson-video-play {
+        width: 52px;
+        height: 52px;
     }
 }
 
