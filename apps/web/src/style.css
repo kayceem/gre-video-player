@@ -939,6 +939,9 @@ button:disabled {
     background: var(--video-bg);
     font-family: "DM Sans", sans-serif;
 }
+.library-player .vjs-big-play-button {
+    display: none;
+}
 .library-player video.vjs-tech {
     position: absolute;
     z-index: auto;

@@ -30,6 +30,7 @@ import {
     RefreshCw,
     Rewind,
     Search,
+    SkipBack,
     SkipForward,
     SlidersHorizontal,
     Sparkles,
@@ -2073,6 +2074,17 @@ function LessonPlayer(props: LessonPlayerProps) {
             Math.min(duration || Number.MAX_SAFE_INTEGER, media.currentTime + seconds)
         );
     };
+    const seekTo = (position: "start" | "end") => {
+        const media = videoRef.current;
+        if (!media) return;
+        if (position === "start") {
+            media.currentTime = 0;
+            return;
+        }
+        if (Number.isFinite(media.duration) && media.duration > 0) {
+            media.currentTime = Math.max(0, media.duration - 0.1);
+        }
+    };
     const toggleFullscreen = () => {
         const player = playerRef.current;
         if (!player) return;
@@ -2099,6 +2111,18 @@ function LessonPlayer(props: LessonPlayerProps) {
                 aria-label="Video controls"
             >
                 <div className="lesson-video-center-controls">
+                    <button
+                        type="button"
+                        className="lesson-video-control"
+                        aria-label="Go to start"
+                        title="Go to start"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            seekTo("start");
+                        }}
+                    >
+                        <SkipBack size={22} />
+                    </button>
                     <button
                         type="button"
                         className="lesson-video-control"
@@ -2134,6 +2158,18 @@ function LessonPlayer(props: LessonPlayerProps) {
                         }}
                     >
                         <FastForward size={24} />
+                    </button>
+                    <button
+                        type="button"
+                        className="lesson-video-control"
+                        aria-label="Go to end"
+                        title="Go to end"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            seekTo("end");
+                        }}
+                    >
+                        <SkipForward size={22} />
                     </button>
                 </div>
                 <button
