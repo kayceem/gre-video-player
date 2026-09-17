@@ -835,11 +835,26 @@ button:disabled {
 }
 .video-loading {
     position: absolute;
-    z-index: 1;
-    color: var(--nav-text);
-    font-size: 13px;
-    letter-spacing: 0.02em;
+    z-index: 6;
+    top: 50%;
+    left: 50%;
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 50%;
+    background: rgba(5, 10, 20, 0.68);
+    transform: translate(-50%, -50%);
     pointer-events: none;
+}
+.video-loading-spinner {
+    width: 22px;
+    height: 22px;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: video-buffering-spin 0.8s linear infinite;
 }
 .video-frame video {
     position: relative;
@@ -1032,6 +1047,22 @@ button:disabled {
 .library-player .vjs-volume-level {
     background: var(--warning);
 }
+.library-player .vjs-current-time{
+    display: flex;
+    padding: 0 0 0 2px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.library-player .vjs-duration {
+    display: flex;
+    padding: 0 2px 0 0;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.library-player .vjs-current-time::after {
+    content: "/";
+    margin: 0 4px;
+}
 .lesson-video-overlay {
     position: absolute;
     z-index: 4;
@@ -1115,20 +1146,28 @@ button:disabled {
         padding: 0 2px;
         font-size: 10px;
     }
-    .library-player .vjs-current-time,
-    .library-player .vjs-duration {
+    .library-player .vjs-volume-panel,
+    .library-player .vjs-playback-rate {
         display: none;
     }
+    .library-player .video-js .vjs-current-time,
+    .library-player .video-js .vjs-duration {
+        display: flex !important;
+    }
     .lesson-video-center-controls {
-        gap: 12px;
+        gap: 14px;
     }
     .lesson-video-control {
-        width: 42px;
-        height: 42px;
+        width: 38px;
+        height: 38px;
     }
     .lesson-video-play {
-        width: 52px;
-        height: 52px;
+        width: 46px;
+        height: 46px;
+    }
+    .lesson-video-skip,
+    .lesson-video-fullscreen {
+        display: none;
     }
 }
 

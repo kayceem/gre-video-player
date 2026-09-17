@@ -2634,6 +2634,10 @@ function LessonPlayer(props: LessonPlayerProps) {
     const playerRef = useRef<any>(null);
     const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
     const backgroundPlaybackRef = useRef(false);
+    const lastVideoTapRef = useRef<{
+        timestamp: number;
+        side: "backward" | "forward";
+    } | null>(null);
     const [loading, setLoading] = useState(true),
         [buffering, setBuffering] = useState(false),
         [error, setError] = useState<string | null>(null),
@@ -2686,8 +2690,8 @@ function LessonPlayer(props: LessonPlayerProps) {
                         children: [
                             "playToggle",
                             "currentTimeDisplay",
-                            "progressControl",
                             "durationDisplay",
+                            "progressControl",
                             "volumePanel",
                             "playbackRateMenuButton",
                             "fullscreenToggle",
@@ -3046,6 +3050,35 @@ function LessonPlayer(props: LessonPlayerProps) {
         );
         notifyVideoSeek("lesson", seconds);
     };
+    const handleMobileVideoTap = (event: React.TouchEvent<HTMLDivElement>) => {
+        if (!window.matchMedia("(max-width: 760px)").matches) return;
+        const target = event.target as HTMLElement;
+        if (
+            target.closest(
+                "button, .vjs-control-bar, .scratch-pad-backdrop, .gre-calculator"
+            )
+        )
+            return;
+        const touch = event.changedTouches[0];
+        if (!touch) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const side =
+            touch.clientX < bounds.left + bounds.width / 2
+                ? "backward"
+                : "forward";
+        const now = Date.now();
+        const previous = lastVideoTapRef.current;
+        if (
+            previous &&
+            previous.side === side &&
+            now - previous.timestamp <= 350
+        ) {
+            seekBy(side === "forward" ? 10 : -10);
+            lastVideoTapRef.current = null;
+            return;
+        }
+        lastVideoTapRef.current = { timestamp: now, side };
+    };
     const seekTo = (position: "start" | "end") => {
         const media = videoRef.current;
         if (!media) return;
@@ -3168,21 +3201,23 @@ function LessonPlayer(props: LessonPlayerProps) {
             onMouseEnter={showControls}
             onMouseMove={showControls}
             onTouchStart={showControls}
+            onTouchEnd={handleMobileVideoTap}
         >
             <div ref={hostRef} />
             <ScratchPad open={scratchPadOpen} onClose={onScratchPadClose} />
             <GreCalculator open={calculatorOpen} onClose={onCalculatorClose} />
-            <div
-                className={`lesson-video-overlay ${
-                    controlsVisible ? "" : "controls-hidden"
-                }`}
-                aria-hidden={!controlsVisible}
-                aria-label="Video controls"
-            >
+            {!loading && !buffering && (
+                <div
+                    className={`lesson-video-overlay ${
+                        controlsVisible ? "" : "controls-hidden"
+                    }`}
+                    aria-hidden={!controlsVisible}
+                    aria-label="Video controls"
+                >
                 <div className="lesson-video-center-controls">
                     <button
                         type="button"
-                        className="lesson-video-control"
+                        className="lesson-video-control lesson-video-start"
                         aria-label="Go to start"
                         title="Go to start"
                         onClick={(event) => {
@@ -3194,7 +3229,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                     </button>
                     <button
                         type="button"
-                        className="lesson-video-control"
+                        className="lesson-video-control lesson-video-skip"
                         aria-label="Back 10 seconds"
                         title="Back 10 seconds"
                         onClick={(event) => {
@@ -3218,7 +3253,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                     </button>
                     <button
                         type="button"
-                        className="lesson-video-control"
+                        className="lesson-video-control lesson-video-skip"
                         aria-label="Forward 10 seconds"
                         title="Forward 10 seconds"
                         onClick={(event) => {
@@ -3230,7 +3265,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                     </button>
                     <button
                         type="button"
-                        className="lesson-video-control"
+                        className="lesson-video-control lesson-video-end"
                         aria-label="Go to end"
                         title="Go to end"
                         onClick={(event) => {
@@ -3253,8 +3288,13 @@ function LessonPlayer(props: LessonPlayerProps) {
                 >
                     {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
                 </button>
-            </div>
-            {loading && <span className="video-loading">Loading lesson…</span>}
+                </div>
+            )}
+            {loading && (
+                <span className="video-loading" role="status" aria-label="Loading lesson">
+                    <span className="video-loading-spinner" />
+                </span>
+            )}
             {buffering && (
                 <span className="video-buffering" role="status" aria-label="Buffering">
                     <span className="video-buffering-spinner" />
