@@ -848,6 +848,77 @@ button:disabled {
 .video-frame.is-loading video {
     opacity: 0.2;
 }
+.video-buffering {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 6;
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 50%;
+    background: rgba(5, 10, 20, 0.68);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+.video-buffering-spinner {
+    width: 22px;
+    height: 22px;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: video-buffering-spin 0.8s linear infinite;
+}
+.video-seek-feedback {
+    position: absolute;
+    top: 50%;
+    left: 20%;
+    z-index: 7;
+    display: flex;
+    width: 72px;
+    height: 72px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    border-radius: 50%;
+    background: rgba(5, 10, 20, 0.7);
+    color: #fff;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    animation: video-seek-feedback-fade 0.65s ease both;
+}
+.video-seek-feedback.forward {
+    right: 20%;
+    left: auto;
+    transform: translate(50%, -50%);
+}
+.video-seek-feedback strong {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+}
+@keyframes video-buffering-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@keyframes video-seek-feedback-fade {
+    0% {
+        opacity: 0;
+    }
+    16% {
+        opacity: 1;
+    }
+    72% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+    }
+}
 .media-error {
     margin: 12px 0 0;
     padding: 10px 12px;
@@ -2891,6 +2962,7 @@ body {
     background: var(--warning);
 }
 .solution-video-player {
+    position: relative;
     width: 100%;
     margin: 0 0 24px;
     border-radius: 8px;
@@ -5272,6 +5344,140 @@ a > svg.lucide {
     opacity: 0.72;
 }
 
+.gre-calculator {
+    position: fixed;
+    z-index: 1000;
+    width: 300px;
+    max-height: calc(100vh - 16px);
+    overflow: auto;
+    margin: 0 auto;
+    padding: 5px 10px 10px;
+    border: 0;
+    border-radius: 7px;
+    background-color: #c0c0c0;
+    box-shadow: 1px 1px 5px #4e4242;
+    color: #fff;
+    font-family: nexa, Inter, Arial, sans-serif;
+    text-align: center;
+    user-select: none;
+    cursor: move;
+}
+.gre-calculator--small {
+    width: 240px;
+}
+.gre-calculator--medium {
+    width: 300px;
+}
+.gre-calculator--large {
+    width: 380px;
+}
+.library-player > .gre-calculator {
+    height: auto;
+}
+.gre-calculator-display,
+#gre-calculator-display-button {
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 4px;
+    font-family: nexa, Inter, Arial, sans-serif;
+    font-size: 23px;
+    line-height: 25px;
+    border-radius: 7px;
+    box-sizing: border-box;
+}
+.gre-calculator-display {
+    display: flex;
+    min-height: 64px;
+    align-items: center;
+    justify-content: flex-end;
+    background: #f5f5f5;
+    color: #3b4244;
+    direction: ltr;
+    overflow-x: auto;
+    white-space: nowrap;
+    border: 0;
+    letter-spacing: 2px;
+    text-align: right;
+    user-select: text;
+    cursor: text;
+}
+.gre-calculator-display:focus {
+    outline: none;
+}
+.gre-calculator-caret {
+    margin-left: 1px;
+    opacity: 0;
+}
+.gre-calculator-memory {
+    margin-right: auto;
+    font-size: 23px;
+    font-weight: 400;
+}
+.gre-calculator-display:focus .gre-calculator-caret {
+    animation: gre-calculator-caret-blink 1s steps(1, end) infinite;
+}
+@keyframes gre-calculator-caret-blink {
+    50% {
+        opacity: 0;
+    }
+}
+.gre-calculator-row {
+    display: flex;
+    gap: 6px;
+}
+.gre-calculator-row button {
+    min-width: 0;
+    flex: 1 1 0;
+    min-height: 46px;
+    margin-bottom: 11px;
+    padding: 0;
+    border: none;
+    border-radius: 5px;
+    box-shadow: 0 4px 0 rgb(0 0 0 / 20%);
+    cursor: pointer;
+    font-family: nexa, Inter, Arial, sans-serif;
+    font-size: 23px;
+    font-weight: 400;
+    line-height: 46px;
+}
+.gre-calculator-row button:active {
+    box-shadow: none;
+    transform: translateY(4px);
+}
+.gre-calculator-m-buttons {
+    background-color: #204060;
+    color: #fff;
+}
+.gre-calculator-signs {
+    background-color: #006699;
+    color: #fff;
+}
+.gre-calculator-clear {
+    background-color: #b34700;
+    color: #fff;
+}
+.gre-calculator-number {
+    background-color: #fff;
+    color: #000;
+}
+.gre-calculator-row button:disabled {
+    opacity: 1;
+    cursor: default;
+}
+.gre-calculator-row button.gre-calculator-signs:disabled {
+    background-color: #bbb;
+    opacity: 1;
+}
+#gre-calculator-display-button {
+    flex: 1 1 0;
+    margin-right: 0;
+    display: none;
+    background-color: #204060;
+    color: #fff;
+    text-align: center;
+    cursor: pointer;
+}
+
 @media (max-width: 760px) {
     .site-nav {
         display: none;
@@ -5360,6 +5566,10 @@ a > svg.lucide {
     .scratch-pad-action span {
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+    .gre-calculator {
+        max-width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
     }
     .account-settings {
         padding: 20px;

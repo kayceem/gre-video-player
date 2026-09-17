@@ -686,11 +686,64 @@ const skipVideo = (
     amount: number
 ) => {
     if (!element) return;
+    const duration =
+        Number.isFinite(element.duration) && element.duration > 0
+            ? element.duration
+            : Number.MAX_SAFE_INTEGER;
     element.currentTime = Math.max(
         0,
-        Math.min(element.duration || 0, element.currentTime + amount)
+        Math.min(duration, element.currentTime + amount)
     );
 };
+type VideoSeekTarget = "lesson" | "solution";
+type VideoSeekFeedback = {
+    target: VideoSeekTarget;
+    amount: number;
+};
+const videoSeekEvent = "gre-video-seek";
+const notifyVideoSeek = (target: VideoSeekTarget, amount: number) => {
+    window.dispatchEvent(
+        new CustomEvent<VideoSeekFeedback>(videoSeekEvent, {
+            detail: { target, amount },
+        })
+    );
+};
+function useVideoSeekFeedback(target: VideoSeekTarget) {
+    const [feedback, setFeedback] = useState<{
+        direction: "forward" | "backward";
+        seconds: number;
+    } | null>(null);
+    const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => {
+        const handleSeekFeedback = (event: Event) => {
+            const detail = (event as CustomEvent<VideoSeekFeedback>).detail;
+            if (!detail || detail.target !== target || !detail.amount) return;
+            const direction = detail.amount > 0 ? "forward" : "backward";
+            setFeedback((current) => ({
+                direction,
+                seconds:
+                    current?.direction === direction
+                        ? current.seconds + Math.abs(detail.amount)
+                        : Math.abs(detail.amount),
+            }));
+            if (feedbackTimerRef.current)
+                clearTimeout(feedbackTimerRef.current);
+            feedbackTimerRef.current = setTimeout(() => {
+                setFeedback(null);
+                feedbackTimerRef.current = null;
+            }, 650);
+        };
+        window.addEventListener(videoSeekEvent, handleSeekFeedback);
+        return () => {
+            window.removeEventListener(videoSeekEvent, handleSeekFeedback);
+            if (feedbackTimerRef.current) {
+                clearTimeout(feedbackTimerRef.current);
+                feedbackTimerRef.current = null;
+            }
+        };
+    }, [target]);
+    return feedback;
+}
 const autoNextKey = "gre-auto-next";
 const autoPlayKey = "gre-auto-play";
 const readBool = (key: string, fallback: boolean) => {
@@ -986,6 +1039,568 @@ function ScratchPad({
     );
 }
 
+class GreCalculatorError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "GreCalculatorError";
+    }
+}
+
+const evaluateGreExpression = (expression: string) => {
+    let cursor = 0;
+    const skipWhitespace = () => {
+        while (/\s/.test(expression[cursor] ?? "")) cursor++;
+    };
+    const parseExpression = (): number => {
+        let value = parseTerm();
+        while (true) {
+            skipWhitespace();
+            const operator = expression[cursor];
+            if (operator !== "+" && operator !== "-") return value;
+            cursor++;
+            const right = parseTerm();
+            value = operator === "+" ? value + right : value - right;
+        }
+    };
+    const parseTerm = (): number => {
+        let value = parseUnary();
+        while (true) {
+            skipWhitespace();
+            const operator = expression[cursor];
+            if (operator !== "*" && operator !== "/") return value;
+            cursor++;
+            const right = parseUnary();
+            if (operator === "/" && right === 0)
+                throw new GreCalculatorError("Cannot divide by zero.");
+            value = operator === "*" ? value * right : value / right;
+        }
+    };
+    const parseUnary = (): number => {
+        skipWhitespace();
+        if (expression[cursor] === "+") {
+            cursor++;
+            return parseUnary();
+        }
+        if (expression[cursor] === "-") {
+            cursor++;
+            return -parseUnary();
+        }
+        return parsePrimary();
+    };
+    const parsePrimary = (): number => {
+        skipWhitespace();
+        if (expression[cursor] === "(") {
+            cursor++;
+            const value = parseExpression();
+            skipWhitespace();
+            if (expression[cursor] !== ")")
+                throw new GreCalculatorError("Invalid expression.");
+            cursor++;
+            return value;
+        }
+        const start = cursor;
+        let hasDigit = false;
+        while (/\d/.test(expression[cursor] ?? "")) {
+            hasDigit = true;
+            cursor++;
+        }
+        if (expression[cursor] === ".") {
+            cursor++;
+            while (/\d/.test(expression[cursor] ?? "")) {
+                hasDigit = true;
+                cursor++;
+            }
+        }
+        if (!hasDigit) throw new GreCalculatorError("Invalid expression.");
+        return Number(expression.slice(start, cursor));
+    };
+    const value = parseExpression();
+    skipWhitespace();
+    if (cursor !== expression.length)
+        throw new GreCalculatorError("Invalid expression.");
+    if (!Number.isFinite(value))
+        throw new GreCalculatorError("The result is too large.");
+    return value;
+};
+
+const formatGreNumber = (value: number) => {
+    if (!Number.isFinite(value))
+        throw new GreCalculatorError("The result is too large.");
+    return String(value);
+};
+
+function GreCalculator({
+    open,
+    onClose,
+}: {
+    open: boolean;
+    onClose: () => void;
+}) {
+    const panelRef = useRef<HTMLElement>(null);
+    const displayRef = useRef<HTMLDivElement>(null);
+    const dragRef = useRef<{
+        pointerId: number;
+        offsetX: number;
+        offsetY: number;
+    } | null>(null);
+    const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [position, setPosition] = useState(() => ({
+        x: Math.max(12, Math.round(window.innerWidth / 2 - 150)),
+        y: 84,
+    }));
+    const [result, setResult] = useState("");
+    const [memory, setMemory] = useState(0);
+    const [memoryHasValue, setMemoryHasValue] = useState(false);
+    const [memoryRecalledForOperand, setMemoryRecalledForOperand] = useState(false);
+    const [decimalDisabled, setDecimalDisabled] = useState(false);
+    const [message, setMessage] = useState("");
+    const [size, setSize] = useState<"small" | "medium" | "large">("medium");
+
+    // The GRE calculator display shows the number currently being entered,
+    // rather than the whole expression. Keep a unary minus with that number.
+    const displayValue = (() => {
+        if (result === "Error") return result;
+        let end = result.length;
+        while (
+            end > 0 &&
+            (["+", "-", "*", "/"].includes(result[end - 1]) ||
+                result[end - 1] === ")")
+        )
+            end--;
+        let start = end;
+        while (start > 0 && /[\d.]/.test(result[start - 1])) start--;
+        if (
+            start > 0 &&
+            result[start - 1] === "-" &&
+            (start === 1 || ["+", "-", "*", "/", "("].includes(result[start - 2]))
+        )
+            start--;
+        const operand = result.slice(start, end) || "0";
+        return operand.includes(".") ? operand : `${operand}.`;
+    })();
+    const updateResult = (next: string) => {
+        setResult(next);
+        const lastOperator = Math.max(
+            next.lastIndexOf("+"),
+            next.lastIndexOf("-"),
+            next.lastIndexOf("*"),
+            next.lastIndexOf("/"),
+            next.lastIndexOf("(")
+        );
+        const operand = next.slice(lastOperator + 1);
+        setDecimalDisabled(operand.includes("."));
+    };
+    const clearMessage = () => setMessage("");
+    const showError = (error: unknown) => {
+        updateResult("Error");
+        setMessage(
+            error instanceof GreCalculatorError
+                ? error.message
+                : "Invalid expression."
+        );
+    };
+    const appendCharacter = (character: string) => {
+        clearMessage();
+        if (result === "Error") {
+            updateResult(character);
+            return;
+        }
+        if (character === "." && decimalDisabled) return;
+        if (character === ")") {
+            const unmatchedOpenParentheses = [...result].reduce(
+                (total, current) =>
+                    total + (current === "(" ? 1 : current === ")" ? -1 : 0),
+                0
+            );
+            if (unmatchedOpenParentheses < 1 || !/[\d)]$/.test(result)) return;
+        }
+        const lastCharacter = result.slice(-1);
+        const lastIsOperator = ["+", "-", "*", "/"].includes(lastCharacter);
+        let currentOperandStart = result.length;
+        while (
+            currentOperandStart > 0 &&
+            /[\d.]/.test(result[currentOperandStart - 1])
+        )
+            currentOperandStart--;
+        let next = result;
+        if (
+            /^\d$/.test(character) &&
+            result.slice(currentOperandStart) === "0"
+        ) {
+            next = result.slice(0, currentOperandStart) + character;
+        } else if (character !== "." && result.endsWith(".")) {
+            next += character;
+        } else if (["+", "-", "*", "/"].includes(character) && lastIsOperator) {
+            next = result.slice(0, -1) + character;
+        } else if ((character === "/" || character === "*") && result.length === 0) {
+            next = "";
+        } else {
+            next += character;
+        }
+        if (["+", "-", "*", "/", "("].includes(character))
+            setMemoryRecalledForOperand(false);
+        updateResult(next);
+    };
+    const clearEntry = () => {
+        clearMessage();
+        if (result === "Error") {
+            updateResult("");
+            return;
+        }
+        if (!result) return;
+
+        // CE removes only the current number/group, preserving the expression
+        // before it (for example, 12+345 becomes 12+).
+        if (result.endsWith(")")) {
+            let depth = 0;
+            for (let index = result.length - 1; index >= 0; index--) {
+                if (result[index] === ")") depth++;
+                if (result[index] === "(") {
+                    depth--;
+                    if (depth === 0) {
+                        updateResult(result.slice(0, index));
+                        return;
+                    }
+                }
+            }
+        }
+
+        let start = result.length;
+        while (start > 0 && /[\d.]/.test(result[start - 1])) start--;
+        if (
+            start > 0 &&
+            result[start - 1] === "-" &&
+            (start - 1 === 0 ||
+                ["+", "-", "*", "/", "("].includes(result[start - 2]))
+        )
+            start--;
+        setMemoryRecalledForOperand(false);
+        updateResult(result.slice(0, start));
+    };
+    const clearAll = () => {
+        setMemoryRecalledForOperand(false);
+        clearMessage();
+        updateResult("");
+    };
+    const calculateResult = () => {
+        try {
+            updateResult(formatGreNumber(evaluateGreExpression(result)));
+            setMemoryRecalledForOperand(false);
+            clearMessage();
+        } catch (error) {
+            showError(error);
+        }
+    };
+    const calculateSquareRoot = () => {
+        try {
+            const value = evaluateGreExpression(result);
+            if (value < 0)
+                throw new GreCalculatorError(
+                    "Cannot take the square root of a negative number."
+                );
+            updateResult(formatGreNumber(Math.sqrt(value)));
+            setMemoryRecalledForOperand(false);
+            clearMessage();
+        } catch (error) {
+            showError(error);
+        }
+    };
+    const toggleSign = () => {
+        clearMessage();
+        if (result === "Error") {
+            updateResult("");
+            return;
+        }
+        let start = result.length;
+        while (start > 0 && /[\d.]/.test(result[start - 1])) start--;
+        if (start === result.length) return;
+        const hasUnaryMinus =
+            start > 0 &&
+            result[start - 1] === "-" &&
+            (start === 1 || ["+", "-", "*", "/", "("].includes(result[start - 2]));
+        updateResult(
+            hasUnaryMinus
+                ? result.slice(0, start - 1) + result.slice(start)
+                : result.slice(0, start) + "-" + result.slice(start)
+        );
+    };
+    const memoryClear = () => {
+        setMemory(0);
+        setMemoryHasValue(false);
+        clearMessage();
+    };
+    const memoryRecall = () => {
+        clearMessage();
+        if (memoryRecalledForOperand) return;
+        if (result === "Error") updateResult("");
+        appendCharacter(memory.toString());
+        setMemoryRecalledForOperand(true);
+    };
+    const memorySum = () => {
+        clearMessage();
+        if (result === "" || result === "Error") return;
+        try {
+            const value = evaluateGreExpression(result);
+            setMemory((stored) => stored + value);
+            setMemoryHasValue(true);
+        } catch (error) {
+            showError(error);
+        }
+    };
+    const showTransferMessage = (nextMessage: string) => {
+        setMessage(nextMessage);
+        if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+        messageTimerRef.current = setTimeout(() => {
+            setMessage("");
+            messageTimerRef.current = null;
+        }, 2000);
+    };
+    const transferDisplay = async () => {
+        const value = displayRef.current;
+        value?.focus();
+        let copied = false;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(displayValue);
+                copied = true;
+            }
+        } catch {}
+        if (!copied && value) {
+            try {
+                const range = document.createRange();
+                range.selectNodeContents(value.firstElementChild ?? value);
+                const selection = window.getSelection();
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+                copied = document.execCommand("copy");
+                selection?.removeAllRanges();
+            } catch {}
+        }
+        showTransferMessage(
+            copied ? "Text copied to clipboard!" : "Unable to copy display text."
+        );
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+        if (!open) return;
+        const key = event.key;
+        if (key === "Escape") {
+            event.preventDefault();
+            onClose();
+        } else if (
+            /^\d$/.test(key) ||
+            [".", "+", "-", "*", "/", "(", ")"].includes(key)
+        ) {
+            event.preventDefault();
+            appendCharacter(key);
+        } else if (key === "Enter" || key === "=") {
+            event.preventDefault();
+            calculateResult();
+        } else if (
+            key.toLowerCase() === "c" &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.altKey
+        ) {
+            event.preventDefault();
+            clearAll();
+        } else if (
+            key.toLowerCase() === "v" &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.altKey
+        ) {
+            event.preventDefault();
+            setSize((current) =>
+                current === "small"
+                    ? "medium"
+                    : current === "medium"
+                      ? "large"
+                      : "small"
+            );
+        }
+    };
+    useEffect(() => {
+        if (!open) return;
+        window.addEventListener("keydown", handleKeyDown);
+        const focusDisplay = () => displayRef.current?.focus();
+        const keepInViewport = () => {
+            const panel = panelRef.current;
+            if (!panel) return;
+            const rect = panel.getBoundingClientRect();
+            setPosition((current) => {
+                const next = {
+                    x: Math.max(8, Math.min(current.x, window.innerWidth - rect.width - 8)),
+                    y: Math.max(8, Math.min(current.y, window.innerHeight - rect.height - 8)),
+                };
+                return next.x === current.x && next.y === current.y ? current : next;
+            });
+        };
+        focusDisplay();
+        keepInViewport();
+        window.addEventListener("resize", keepInViewport);
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            window.removeEventListener("resize", keepInViewport);
+        };
+    }, [open, result, memory, size]);
+    useEffect(
+        () => () => {
+            if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+        },
+        []
+    );
+    if (!open) return null;
+    const unmatchedOpenParentheses = [...result].reduce(
+        (total, current) =>
+            total + (current === "(" ? 1 : current === ")" ? -1 : 0),
+        0
+    );
+    const canCloseParenthesis =
+        unmatchedOpenParentheses > 0 && /[\d)]$/.test(result);
+    const button = (
+        label: string,
+        onClick: () => void,
+        className: string,
+        ariaLabel?: string,
+        disabled = false
+    ) => (
+        <button
+            type="button"
+            className={className}
+            onClick={onClick}
+            aria-label={ariaLabel ?? label}
+            disabled={disabled}
+        >
+            {label}
+        </button>
+    );
+    return (
+        <section
+            ref={panelRef}
+            className={`gre-calculator gre-calculator--${size}`}
+            role="dialog"
+            aria-modal="false"
+            aria-label="GRE Calculator"
+            style={{ left: position.x, top: position.y }}
+            onPointerDown={(event) => {
+                if (
+                    event.button !== 0 ||
+                    (event.target as HTMLElement).closest("button, input")
+                )
+                    return;
+                const rect = panelRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                dragRef.current = {
+                    pointerId: event.pointerId,
+                    offsetX: event.clientX - rect.left,
+                    offsetY: event.clientY - rect.top,
+                };
+                event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+                if (!dragRef.current || dragRef.current.pointerId !== event.pointerId)
+                    return;
+                const rect = panelRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                setPosition({
+                    x: Math.max(8, Math.min(window.innerWidth - rect.width - 8, event.clientX - dragRef.current.offsetX)),
+                    y: Math.max(8, Math.min(window.innerHeight - rect.height - 8, event.clientY - dragRef.current.offsetY)),
+                });
+            }}
+            onPointerUp={(event) => {
+                if (dragRef.current?.pointerId === event.pointerId) {
+                    dragRef.current = null;
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+            }}
+            onPointerCancel={() => {
+                dragRef.current = null;
+            }}
+        >
+            <p className="sr-only" role="status" aria-live="polite">
+                {message}
+            </p>
+            <div
+                ref={displayRef}
+                className="gre-calculator-display"
+                role="textbox"
+                aria-readonly="true"
+                aria-label="Calculator display"
+                tabIndex={0}
+            >
+                {memoryHasValue && <span className="gre-calculator-memory">M</span>}
+                <span>{displayValue}</span>
+                <span className="gre-calculator-caret" aria-hidden="true">
+                    |
+                </span>
+            </div>
+            <div className="gre-calculator-row">
+                {button("MC", memoryClear, "gre-calculator-m-buttons")}
+                {button("MR", memoryRecall, "gre-calculator-m-buttons")}
+                {button("M+", memorySum, "gre-calculator-m-buttons")}
+                {button("(", () => appendCharacter("("), "gre-calculator-signs")}
+                {button(
+                    ")",
+                    () => appendCharacter(")"),
+                    "gre-calculator-signs",
+                    undefined,
+                    !canCloseParenthesis
+                )}
+            </div>
+            <div className="gre-calculator-row">
+                {button("7", () => appendCharacter("7"), "gre-calculator-number")}
+                {button("8", () => appendCharacter("8"), "gre-calculator-number")}
+                {button("9", () => appendCharacter("9"), "gre-calculator-number")}
+                {button("÷", () => appendCharacter("/"), "gre-calculator-signs", "Divide")}
+                {button("C", clearAll, "gre-calculator-clear", "Clear")}
+            </div>
+            <div className="gre-calculator-row">
+                {button("4", () => appendCharacter("4"), "gre-calculator-number")}
+                {button("5", () => appendCharacter("5"), "gre-calculator-number")}
+                {button("6", () => appendCharacter("6"), "gre-calculator-number")}
+                {button("x", () => appendCharacter("*"), "gre-calculator-signs", "Multiply")}
+                {button("CE", clearEntry, "gre-calculator-clear", "Clear entry")}
+            </div>
+            <div className="gre-calculator-row">
+                {button("1", () => appendCharacter("1"), "gre-calculator-number")}
+                {button("2", () => appendCharacter("2"), "gre-calculator-number")}
+                {button("3", () => appendCharacter("3"), "gre-calculator-number")}
+                {button("-", () => appendCharacter("-"), "gre-calculator-signs", "Subtract")}
+                {button("√", calculateSquareRoot, "gre-calculator-signs", "Square root")}
+            </div>
+            <div className="gre-calculator-row">
+                {button(
+                    "+/-",
+                    toggleSign,
+                    "gre-calculator-signs",
+                    "Change sign",
+                    !/[\d.]$/.test(result)
+                )}
+                {button("0", () => appendCharacter("0"), "gre-calculator-number")}
+                <button
+                    type="button"
+                    className="gre-calculator-number"
+                    id="gre-calculator-decimal"
+                    disabled={decimalDisabled}
+                    onClick={() => appendCharacter(".")}
+                >
+                    .
+                </button>
+                {button("+", () => appendCharacter("+"), "gre-calculator-signs", "Add")}
+                {button("=", calculateResult, "gre-calculator-m-buttons", "Equals")}
+            </div>
+            <div className="gre-calculator-row gre-calculator-transfer-row">
+                <input
+                    type="button"
+                    value="Transfer Display"
+                    id="gre-calculator-display-button"
+                    onClick={transferDisplay}
+                />
+            </div>
+        </section>
+    );
+}
+
 function App() {
     const [catalogs, setCatalogs] = useState<Catalogs>(initialCatalogs),
         [boot, setBoot] = useState<Bootstrap>({
@@ -1008,9 +1623,21 @@ function App() {
             location.pathname === "/" ? "dashboard" : location.pathname.slice(1)
         ),
         [locationVersion, setLocationVersion] = useState(0),
-        [scratchPadOpen, setScratchPadOpen] = useState(false);
+        [scratchPadOpen, setScratchPadOpen] = useState(false),
+        [calculatorOpen, setCalculatorOpen] = useState(false);
     const pwa = usePwa();
     const rememberedRoutes = useRef({ learn: "/learn", practice: "/practice" });
+    const spaceHoldRef = useRef<{
+        media: HTMLVideoElement;
+        previousRate: number;
+        wasPaused: boolean;
+        timer: ReturnType<typeof setTimeout>;
+        activated: boolean;
+    } | null>(null);
+    const seekThrottleRef = useRef<{
+        target: VideoSeekTarget;
+        timestamp: number;
+    } | null>(null);
     const rememberCurrentRoute = () => {
         const path = `${location.pathname}${location.search}`;
         if (
@@ -1159,6 +1786,45 @@ function App() {
         const timer = () => {
             pending = false;
         };
+        const releaseSpaceHold = () => {
+            const hold = spaceHoldRef.current;
+            if (!hold) return;
+            clearTimeout(hold.timer);
+            if (hold.activated) {
+                hold.media.playbackRate = hold.previousRate;
+                if (hold.wasPaused) hold.media.pause();
+            } else if (hold.wasPaused) {
+                hold.media.play().catch(() => {});
+            } else {
+                hold.media.pause();
+            }
+            spaceHoldRef.current = null;
+        };
+        const activeVideo = (target: VideoSeekTarget) =>
+            document.querySelector<HTMLVideoElement>(
+                target === "lesson"
+                    ? ".lesson-player video"
+                    : ".solution-dialog video"
+            );
+        const seekWithFeedback = (
+            target: VideoSeekTarget,
+            amount: number,
+            repeated: boolean
+        ) => {
+            const now = performance.now();
+            const previousSeek = seekThrottleRef.current;
+            if (
+                repeated &&
+                previousSeek?.target === target &&
+                now - previousSeek.timestamp < 120
+            )
+                return;
+            seekThrottleRef.current = { target, timestamp: now };
+            const media = activeVideo(target);
+            if (!media) return;
+            skipVideo(media, amount);
+            notifyVideoSeek(target, amount);
+        };
         const key = (event: KeyboardEvent) => {
             const target = event.target as HTMLElement;
             const keyLower = event.key.toLowerCase();
@@ -1172,9 +1838,89 @@ function App() {
                 }
                 return;
             }
-            if (!pending && keyLower === "q" && !isInteractiveTarget) {
+            if (calculatorOpen) {
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    setCalculatorOpen(false);
+                }
+                return;
+            }
+            const isTyping = Boolean(
+                target?.matches("input, textarea, select, [contenteditable=true]")
+            );
+            if (
+                !pending &&
+                keyLower === "c" &&
+                !isTyping &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.altKey
+            ) {
+                event.preventDefault();
+                setCalculatorOpen(true);
+                return;
+            }
+            if (
+                !pending &&
+                keyLower === "q" &&
+                (!isInteractiveTarget || route === "learn/video")
+            ) {
                 event.preventDefault();
                 setScratchPadOpen(true);
+                return;
+            }
+            if (
+                event.key === " " &&
+                !isTyping &&
+                !target?.closest(".vjs-slider")
+            ) {
+                const videoTarget: VideoSeekTarget | null =
+                    route === "learn/video"
+                        ? "lesson"
+                        : route === "practice/question" &&
+                          target?.closest(".solution-dialog-backdrop")
+                        ? "solution"
+                        : null;
+                if (videoTarget) {
+                    event.preventDefault();
+                    if (event.repeat || spaceHoldRef.current) return;
+                    const media = activeVideo(videoTarget);
+                    if (!media) return;
+                    const hold = {
+                        media,
+                        previousRate: media.playbackRate,
+                        wasPaused: media.paused,
+                        timer: undefined as unknown as ReturnType<
+                            typeof setTimeout
+                        >,
+                        activated: false,
+                    };
+                    hold.timer = setTimeout(() => {
+                        if (spaceHoldRef.current !== hold) return;
+                        hold.activated = true;
+                        hold.media.playbackRate = 2;
+                        hold.media.play().catch(() => {});
+                    }, 180);
+                    spaceHoldRef.current = hold;
+                    return;
+                }
+            }
+            if (
+                route === "practice/question" &&
+                target?.closest(".solution-dialog-backdrop") &&
+                (event.key === "ArrowLeft" || event.key === "ArrowRight")
+            ) {
+                if (
+                    !isTyping &&
+                    !target?.closest(".vjs-slider")
+                ) {
+                    event.preventDefault();
+                    seekWithFeedback(
+                        "solution",
+                        event.key === "ArrowRight" ? 10 : -10,
+                        event.repeat
+                    );
+                }
                 return;
             }
             if (
@@ -1206,55 +1952,11 @@ function App() {
                         return;
                     }
                     event.preventDefault();
-                    skipVideo(
-                        document.querySelector<HTMLVideoElement>(
-                            ".lesson-player video"
-                        ),
-                        event.key === "ArrowRight" ? 10 : -10
+                    seekWithFeedback(
+                        "lesson",
+                        event.key === "ArrowRight" ? 10 : -10,
+                        event.repeat
                     );
-                    return;
-                }
-            }
-            if (route === "learn/video" && event.key === " ") {
-                if (
-                    !target?.matches(
-                        "input, textarea, select, [contenteditable=true]"
-                    ) &&
-                    !target?.closest(".vjs-slider")
-                ) {
-                    event.preventDefault();
-                    const player =
-                        document.querySelector<HTMLVideoElement>(
-                            ".video-frame video"
-                        );
-                    if (player) {
-                        player.paused
-                            ? player.play().catch(() => {})
-                            : player.pause();
-                    }
-                    return;
-                }
-            }
-            if (route === "practice/question" && event.key === " ") {
-                const solutionDialog = target?.closest(
-                    ".solution-dialog-backdrop"
-                );
-                if (
-                    solutionDialog &&
-                    !target?.matches(
-                        "input, textarea, select, [contenteditable=true]"
-                    ) &&
-                    !target?.closest(".vjs-slider")
-                ) {
-                    event.preventDefault();
-                    const player = document.querySelector<HTMLVideoElement>(
-                        ".solution-dialog video"
-                    );
-                    if (player) {
-                        player.paused
-                            ? player.play().catch(() => {})
-                            : player.pause();
-                    }
                     return;
                 }
             }
@@ -1323,7 +2025,7 @@ function App() {
             if (event.key === "?") {
                 setNotice({
                     message:
-                        "Q Scratch pad · / Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · F Fullscreen · M Mute",
+                        "C Calculator · Q Scratch pad · / Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · hold Space 2× · ← → Seek · F Fullscreen · M Mute",
                     tone: "warning",
                 });
                 return;
@@ -1371,9 +2073,22 @@ function App() {
                 ]?.focus();
             }
         };
-        addEventListener("keydown", key);
-        return () => removeEventListener("keydown", key);
-    }, [route, scratchPadOpen]);
+        const keyup = (event: KeyboardEvent) => {
+            if (event.key !== " " || !spaceHoldRef.current) return;
+            event.preventDefault();
+            releaseSpaceHold();
+        };
+        const releaseOnBlur = () => releaseSpaceHold();
+        addEventListener("keydown", key, true);
+        addEventListener("keyup", keyup, true);
+        addEventListener("blur", releaseOnBlur);
+        return () => {
+            removeEventListener("keydown", key, true);
+            removeEventListener("keyup", keyup, true);
+            removeEventListener("blur", releaseOnBlur);
+            releaseSpaceHold();
+        };
+    }, [route, scratchPadOpen, calculatorOpen]);
     if (loading)
         return (
             <main className="center-state">
@@ -1396,10 +2111,18 @@ function App() {
         );
     return (
         <div className="app-shell">
-            <ScratchPad
-                open={scratchPadOpen}
-                onClose={() => setScratchPadOpen(false)}
-            />
+            {route !== "learn/video" && (
+                <ScratchPad
+                    open={scratchPadOpen}
+                    onClose={() => setScratchPadOpen(false)}
+                />
+            )}
+            {route !== "learn/video" && (
+                <GreCalculator
+                    open={calculatorOpen}
+                    onClose={() => setCalculatorOpen(false)}
+                />
+            )}
             <a className="skip-link" href="#main-content">
                 Skip to content
             </a>
@@ -1438,6 +2161,10 @@ function App() {
                         catalogs={catalogs}
                         boot={boot}
                         mutate={mutate}
+                        scratchPadOpen={scratchPadOpen}
+                        onScratchPadClose={() => setScratchPadOpen(false)}
+                        calculatorOpen={calculatorOpen}
+                        onCalculatorClose={() => setCalculatorOpen(false)}
                         onProgress={(
                             videoId,
                             positionSeconds,
@@ -1850,6 +2577,10 @@ const loadVideojs = () =>
 type LessonPlayerProps = {
     videoId: string;
     src: string;
+    scratchPadOpen: boolean;
+    onScratchPadClose: () => void;
+    calculatorOpen: boolean;
+    onCalculatorClose: () => void;
     lessonTitle: string;
     collectionTitle?: string;
     videoRef: { current: HTMLVideoElement | null };
@@ -1874,6 +2605,10 @@ function LessonPlayer(props: LessonPlayerProps) {
     const {
         videoId,
         src,
+        scratchPadOpen,
+        onScratchPadClose,
+        calculatorOpen,
+        onCalculatorClose,
         lessonTitle,
         collectionTitle,
         videoRef,
@@ -1900,6 +2635,7 @@ function LessonPlayer(props: LessonPlayerProps) {
     const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
     const backgroundPlaybackRef = useRef(false);
     const [loading, setLoading] = useState(true),
+        [buffering, setBuffering] = useState(false),
         [error, setError] = useState<string | null>(null),
         [playing, setPlaying] = useState(false),
         [isFullscreen, setIsFullscreen] = useState(false),
@@ -1933,6 +2669,7 @@ function LessonPlayer(props: LessonPlayerProps) {
         let removeFullscreenListeners = () => {};
         let removeBackgroundListeners = () => {};
         setLoading(true);
+        setBuffering(false);
         setError(null);
 
         loadVideojs()
@@ -1962,7 +2699,11 @@ function LessonPlayer(props: LessonPlayerProps) {
                     const el = containerRef.current;
                     const media = el?.querySelector("video") as any;
                     if (!el) return;
-                    if (media?.webkitEnterFullscreen) {
+                    const isAppleMobile =
+                        /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                        (navigator.platform === "MacIntel" &&
+                            navigator.maxTouchPoints > 1);
+                    if (isAppleMobile && media?.webkitEnterFullscreen) {
                         media.webkitEnterFullscreen();
                     } else if (el.requestFullscreen) {
                         el.requestFullscreen().catch(() => {});
@@ -2169,9 +2910,15 @@ function LessonPlayer(props: LessonPlayerProps) {
                 });
 
                 player.on("loadeddata", () => setLoading(false));
-                player.on("canplay", () => setLoading(false));
-                player.on("waiting", () => setLoading(true));
-                player.on("playing", () => setLoading(false));
+                player.on("canplay", () => {
+                    setLoading(false);
+                    setBuffering(false);
+                });
+                player.on("waiting", () => setBuffering(true));
+                player.on("playing", () => {
+                    setLoading(false);
+                    setBuffering(false);
+                });
                 player.on("play", () => {
                     setPlaying(true);
                     setMediaSessionState("playing");
@@ -2187,6 +2934,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                 });
                 player.on("pause", () => {
                     setPlaying(false);
+                    setBuffering(false);
                     setMediaSessionState("paused");
                     if (backgroundAudio && !backgroundPlaybackRef.current)
                         backgroundAudio.pause();
@@ -2196,6 +2944,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                 player.on("ended", () => {
                     if (backgroundAudio) backgroundAudio.pause();
                     backgroundPlaybackRef.current = false;
+                    setBuffering(false);
                     setMediaSessionState("paused");
                     const current = media();
                     if (current) onEnded(current);
@@ -2205,6 +2954,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                 );
                 player.on("error", () => {
                     setLoading(false);
+                    setBuffering(false);
                     setError(
                         "This lesson could not be played. Check your connection, then try another lesson or reload the page."
                     );
@@ -2294,6 +3044,7 @@ function LessonPlayer(props: LessonPlayerProps) {
             0,
             Math.min(duration || Number.MAX_SAFE_INTEGER, media.currentTime + seconds)
         );
+        notifyVideoSeek("lesson", seconds);
     };
     const seekTo = (position: "start" | "end") => {
         const media = videoRef.current;
@@ -2312,6 +3063,7 @@ function LessonPlayer(props: LessonPlayerProps) {
         if (player.isFullscreen()) player.exitFullscreen();
         else player.requestFullscreen();
     };
+    const seekFeedback = useVideoSeekFeedback("lesson");
     useEffect(() => {
         const cleanTitle = lessonTitle.trim() || "GRE lesson";
         const previousDocumentTitle = document.title;
@@ -2411,13 +3163,15 @@ function LessonPlayer(props: LessonPlayerProps) {
             ref={containerRef}
             className={`video-frame lesson-player library-player ${
                 loading ? "is-loading" : ""
-            }`}
-            aria-busy={loading}
+            } ${buffering ? "is-buffering" : ""}`}
+            aria-busy={loading || buffering}
             onMouseEnter={showControls}
             onMouseMove={showControls}
             onTouchStart={showControls}
         >
             <div ref={hostRef} />
+            <ScratchPad open={scratchPadOpen} onClose={onScratchPadClose} />
+            <GreCalculator open={calculatorOpen} onClose={onCalculatorClose} />
             <div
                 className={`lesson-video-overlay ${
                     controlsVisible ? "" : "controls-hidden"
@@ -2501,6 +3255,26 @@ function LessonPlayer(props: LessonPlayerProps) {
                 </button>
             </div>
             {loading && <span className="video-loading">Loading lesson…</span>}
+            {buffering && (
+                <span className="video-buffering" role="status" aria-label="Buffering">
+                    <span className="video-buffering-spinner" />
+                </span>
+            )}
+            {seekFeedback && (
+                <span
+                    key={`${seekFeedback.direction}-${seekFeedback.seconds}`}
+                    className={`video-seek-feedback ${seekFeedback.direction}`}
+                    role="status"
+                    aria-live="polite"
+                >
+                    {seekFeedback.direction === "forward" ? (
+                        <FastForward size={20} aria-hidden="true" />
+                    ) : (
+                        <Rewind size={20} aria-hidden="true" />
+                    )}
+                    <strong>{seekFeedback.seconds}s</strong>
+                </span>
+            )}
             {error && (
                 <p className="video-error" role="alert">
                     {error}
@@ -2919,11 +3693,19 @@ function LearnPlayer({
     catalogs,
     boot,
     mutate,
+    scratchPadOpen,
+    onScratchPadClose,
+    calculatorOpen,
+    onCalculatorClose,
     onProgress,
 }: {
     catalogs: Catalogs;
     boot: Bootstrap;
     mutate: (url: string, method: string, body: any) => void;
+    scratchPadOpen: boolean;
+    onScratchPadClose: () => void;
+    calculatorOpen: boolean;
+    onCalculatorClose: () => void;
     onProgress: (
         videoId: string,
         positionSeconds: number,
@@ -3140,6 +3922,10 @@ function LearnPlayer({
                     src={`/api/media/course/${encodeURIComponent(
                         video.mediaId
                     )}`}
+                    scratchPadOpen={scratchPadOpen}
+                    onScratchPadClose={onScratchPadClose}
+                    calculatorOpen={calculatorOpen}
+                    onCalculatorClose={onCalculatorClose}
                     lessonTitle={video.title}
                     collectionTitle={activeCategory?.title ?? course.title}
                     videoRef={videoRef}
@@ -4622,11 +5408,14 @@ function Feedback({ feedback }: { feedback: any }) {
 }
 function SolutionPlayer({ src }: { src: string }) {
     const hostRef = useRef<HTMLDivElement>(null);
+    const [buffering, setBuffering] = useState(false);
+    const seekFeedback = useVideoSeekFeedback("solution");
     useEffect(() => {
         const host = hostRef.current;
         if (!host) return;
         let disposed = false;
         let player: any;
+        setBuffering(false);
         loadVideojs().then((videojs) => {
             if (disposed) return;
             const element = document.createElement("video-js");
@@ -4643,16 +5432,45 @@ function SolutionPlayer({ src }: { src: string }) {
                 media?.setAttribute("playsinline", "true");
                 media?.setAttribute("webkit-playsinline", "true");
             });
+            player.on("waiting", () => setBuffering(true));
+            player.on("playing", () => setBuffering(false));
+            player.on("canplay", () => setBuffering(false));
+            player.on("pause", () => setBuffering(false));
+            player.on("error", () => setBuffering(false));
             player.src({ src, type: "video/mp4" });
         });
         return () => {
             disposed = true;
+            setBuffering(false);
             player?.dispose();
         };
     }, [src]);
     return (
-        <div className="solution-video-player">
+        <div
+            className={`solution-video-player ${buffering ? "is-buffering" : ""}`}
+            aria-busy={buffering}
+        >
             <div ref={hostRef} />
+            {buffering && (
+                <span className="video-buffering" role="status" aria-label="Buffering">
+                    <span className="video-buffering-spinner" />
+                </span>
+            )}
+            {seekFeedback && (
+                <span
+                    key={`${seekFeedback.direction}-${seekFeedback.seconds}`}
+                    className={`video-seek-feedback ${seekFeedback.direction}`}
+                    role="status"
+                    aria-live="polite"
+                >
+                    {seekFeedback.direction === "forward" ? (
+                        <FastForward size={20} aria-hidden="true" />
+                    ) : (
+                        <Rewind size={20} aria-hidden="true" />
+                    )}
+                    <strong>{seekFeedback.seconds}s</strong>
+                </span>
+            )}
         </div>
     );
 }
