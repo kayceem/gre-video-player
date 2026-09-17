@@ -183,31 +183,61 @@ async function queueMutation(mutation: {
         r.onerror = () => reject(r.error);
     });
 }
-async function flushQueue() {
-    const db = await openStore("mutations");
-    const entries = await new Promise<any[]>((resolve, reject) => {
-        const r = db.transaction("mutations").objectStore("mutations").getAll();
+type FlushQueueResult = {
+    synced: number;
+    remaining: number;
+};
+let activeQueueFlush: Promise<FlushQueueResult> | null = null;
+
+async function countQueuedMutations(db: IDBDatabase) {
+    return new Promise<number>((resolve, reject) => {
+        const r = db.transaction("mutations").objectStore("mutations").count();
         r.onsuccess = () => resolve(r.result);
         r.onerror = () => reject(r.error);
     });
-    for (const e of entries) {
-        try {
-            await api(e.url, {
-                method: e.method,
-                body: JSON.stringify(e.body),
-            });
-            await new Promise<void>((resolve, reject) => {
-                const r = db
-                    .transaction("mutations", "readwrite")
-                    .objectStore("mutations")
-                    .delete(e.id);
-                r.onsuccess = () => resolve();
-                r.onerror = () => reject(r.error);
-            });
-        } catch {
-            break;
+}
+
+function flushQueue() {
+    if (activeQueueFlush) return activeQueueFlush;
+
+    activeQueueFlush = (async (): Promise<FlushQueueResult> => {
+        const db = await openStore("mutations");
+        const entries = await new Promise<any[]>((resolve, reject) => {
+            const r = db
+                .transaction("mutations")
+                .objectStore("mutations")
+                .getAll();
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
+        });
+        let synced = 0;
+        for (const e of entries) {
+            try {
+                await api(e.url, {
+                    method: e.method,
+                    body: JSON.stringify(e.body),
+                });
+                await new Promise<void>((resolve, reject) => {
+                    const r = db
+                        .transaction("mutations", "readwrite")
+                        .objectStore("mutations")
+                        .delete(e.id);
+                    r.onsuccess = () => resolve();
+                    r.onerror = () => reject(r.error);
+                });
+                synced += 1;
+            } catch {
+                break;
+            }
         }
-    }
+        return { synced, remaining: await countQueuedMutations(db) };
+    })();
+
+    const result = activeQueueFlush.finally(() => {
+        activeQueueFlush = null;
+    });
+    activeQueueFlush = result;
+    return result;
 }
 async function loadCatalogs(): Promise<Catalogs> {
     const results = await Promise.all(
@@ -969,7 +999,9 @@ function App() {
         ),
         [loading, setLoading] = useState(true),
         [catalogError, setCatalogError] = useState<string | null>(null),
-        [notice, setNotice] = useState<string | null>(null),
+        [notice, setNotice] = useState<
+            { message: string; tone: "warning" | "success" } | null
+        >(null),
         [online, setOnline] = useState(navigator.onLine),
         [theme, setTheme] = useState<Theme>(readTheme),
         [route, setRoute] = useState(
@@ -992,6 +1024,22 @@ function App() {
         )
             rememberedRoutes.current.practice = path;
     };
+    const flushAndNotify = useCallback(
+        async (notifyWhenAlreadyEmpty = false) => {
+            const result = await flushQueue();
+            if (
+                result.remaining === 0 &&
+                (result.synced > 0 || notifyWhenAlreadyEmpty)
+            ) {
+                setNotice({
+                    message: "Connected — all local progress is synced.",
+                    tone: "success",
+                });
+            }
+            return result;
+        },
+        []
+    );
     useEffect(() => {
         const load = async () => {
             try {
@@ -1004,7 +1052,7 @@ function App() {
                 setUser(auth.user);
                 if (auth.user) {
                     setBoot(await api("/api/me/bootstrap"));
-                    await flushQueue();
+                    await flushAndNotify();
                 }
             } catch {
             } finally {
@@ -1023,7 +1071,7 @@ function App() {
         };
         const on = () => {
             setOnline(navigator.onLine);
-            if (navigator.onLine) flushQueue().catch(() => {});
+            if (navigator.onLine) flushAndNotify(true).catch(() => {});
         };
         addEventListener("popstate", pop);
         addEventListener("online", on);
@@ -1033,13 +1081,13 @@ function App() {
             removeEventListener("online", on);
             removeEventListener("offline", on);
         };
-    }, []);
+    }, [flushAndNotify]);
     useEffect(() => {
         rememberCurrentRoute();
     }, [route, locationVersion]);
     useEffect(() => {
-        if (user) flushQueue().catch(() => {});
-    }, [user]);
+        if (user) flushAndNotify().catch(() => {});
+    }, [user, flushAndNotify]);
     useEffect(() => {
         document.documentElement.setAttribute("data-theme", theme);
         try {
@@ -1068,22 +1116,28 @@ function App() {
             await api(url, { method, body: JSON.stringify(body) });
         } catch (error) {
             if (error instanceof ApiRequestError) {
-                setNotice(
-                    error.status === 401
-                        ? "Sign in to sync your progress across devices."
-                        : error.message
-                );
+                setNotice({
+                    message:
+                        error.status === 401
+                            ? "Sign in to sync your progress across devices."
+                            : error.message,
+                    tone: "warning",
+                });
                 return;
             }
             try {
                 await queueMutation({ url, method, body });
-                setNotice(
-                    navigator.onLine
+                setNotice({
+                    message: navigator.onLine
                         ? "Saved on this device. It will sync when the server is reachable."
-                        : "Saved on this device. It will sync when you reconnect."
-                );
+                        : "Saved on this device. It will sync when you reconnect.",
+                    tone: "warning",
+                });
             } catch {
-                setNotice("Unable to save progress right now. Please try again.");
+                setNotice({
+                    message: "Unable to save progress right now. Please try again.",
+                    tone: "warning",
+                });
             }
         }
     }, []);
@@ -1267,9 +1321,11 @@ function App() {
                 return;
             }
             if (event.key === "?") {
-                setNotice(
-                    "Q Scratch pad · / Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · F Fullscreen · M Mute"
-                );
+                setNotice({
+                    message:
+                        "Q Scratch pad · / Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · F Fullscreen · M Mute",
+                    tone: "warning",
+                });
                 return;
             }
             if (route === "learn/video" && event.key.toLowerCase() === "n") {
@@ -1370,8 +1426,8 @@ function App() {
                     onUpdate={pwa.applyUpdate}
                 />
                 {notice && (
-                    <div className="notice" role="status">
-                        {notice}
+                    <div className={`notice ${notice.tone}`} role="status">
+                        {notice.message}
                         <button onClick={() => setNotice(null)}>×</button>
                     </div>
                 )}
@@ -1794,6 +1850,8 @@ const loadVideojs = () =>
 type LessonPlayerProps = {
     videoId: string;
     src: string;
+    lessonTitle: string;
+    collectionTitle?: string;
     videoRef: { current: HTMLVideoElement | null };
     playbackRate: number;
     onPlaybackRateChange: (rate: number) => void;
@@ -1816,6 +1874,8 @@ function LessonPlayer(props: LessonPlayerProps) {
     const {
         videoId,
         src,
+        lessonTitle,
+        collectionTitle,
         videoRef,
         playbackRate,
         onPlaybackRateChange,
@@ -1837,6 +1897,8 @@ function LessonPlayer(props: LessonPlayerProps) {
     const hostRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const playerRef = useRef<any>(null);
+    const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
+    const backgroundPlaybackRef = useRef(false);
     const [loading, setLoading] = useState(true),
         [error, setError] = useState<string | null>(null),
         [playing, setPlaying] = useState(false),
@@ -1869,6 +1931,7 @@ function LessonPlayer(props: LessonPlayerProps) {
         let disposed = false;
         let player: any;
         let removeFullscreenListeners = () => {};
+        let removeBackgroundListeners = () => {};
         setLoading(true);
         setError(null);
 
@@ -1942,14 +2005,161 @@ function LessonPlayer(props: LessonPlayerProps) {
                     player
                         .el()
                         .querySelector("video") as HTMLVideoElement | null;
+                const prepareMediaElement = (current: HTMLVideoElement | null) => {
+                    if (!current) return;
+                    current.setAttribute("playsinline", "");
+                    current.setAttribute("webkit-playsinline", "");
+                    current.setAttribute("x-webkit-airplay", "allow");
+                };
+                player.ready(() => prepareMediaElement(media()));
+
+                const isAppleMobile =
+                    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                    (navigator.platform === "MacIntel" &&
+                        navigator.maxTouchPoints > 1);
+                const backgroundAudio = isAppleMobile
+                    ? document.createElement("audio")
+                    : null;
+                if (backgroundAudio) {
+                    backgroundAudio.src = src;
+                    backgroundAudio.preload = "auto";
+                    backgroundAudio.setAttribute("playsinline", "");
+                    backgroundAudio.setAttribute("aria-hidden", "true");
+                    Object.assign(backgroundAudio.style, {
+                        position: "absolute",
+                        width: "1px",
+                        height: "1px",
+                        opacity: "0",
+                        pointerEvents: "none",
+                    });
+                    host.appendChild(backgroundAudio);
+                    backgroundAudioRef.current = backgroundAudio;
+                }
+                const mediaSession = (navigator as Navigator & {
+                    mediaSession?: any;
+                }).mediaSession;
+                const setMediaSessionState = (
+                    state: "none" | "paused" | "playing"
+                ) => {
+                    if (mediaSession) mediaSession.playbackState = state;
+                };
+                const warmBackgroundAudio = (current: HTMLVideoElement) => {
+                    if (!backgroundAudio || backgroundPlaybackRef.current) return;
+                    backgroundAudio.muted = true;
+                    backgroundAudio.playbackRate = current.playbackRate;
+                    try {
+                        backgroundAudio.currentTime = current.currentTime;
+                    } catch {}
+                    backgroundAudio.play().catch(() => {});
+                };
+                const enterBackgroundPlayback = () => {
+                    const current = media();
+                    if (
+                        !backgroundAudio ||
+                        !current ||
+                        current.paused ||
+                        current.ended ||
+                        backgroundPlaybackRef.current
+                    )
+                        return;
+                    backgroundPlaybackRef.current = true;
+                    backgroundAudio.muted = false;
+                    backgroundAudio.playbackRate = current.playbackRate;
+                    try {
+                        backgroundAudio.currentTime = current.currentTime;
+                    } catch {}
+                    current.muted = true;
+                    current.pause();
+                    backgroundAudio.play().catch(() => {
+                        backgroundPlaybackRef.current = false;
+                        backgroundAudio.pause();
+                        backgroundAudio.muted = true;
+                        current.muted = false;
+                        setMediaSessionState("paused");
+                    });
+                    setMediaSessionState("playing");
+                };
+                const leaveBackgroundPlayback = () => {
+                    const current = media();
+                    if (!backgroundAudio || !current || !backgroundPlaybackRef.current)
+                        return;
+                    const shouldResume =
+                        !backgroundAudio.paused && !backgroundAudio.ended;
+                    backgroundAudio.pause();
+                    if (Number.isFinite(backgroundAudio.currentTime))
+                        current.currentTime = backgroundAudio.currentTime;
+                    current.muted = false;
+                    backgroundPlaybackRef.current = false;
+                    if (shouldResume) current.play().catch(() => {});
+                };
+                const onBackgroundTimeUpdate = () => {
+                    if (!backgroundPlaybackRef.current || !backgroundAudio) return;
+                    const current = media();
+                    if (!current) return;
+                    current.currentTime = backgroundAudio.currentTime;
+                    onTimeUpdate(current);
+                };
+                const onBackgroundEnded = () => {
+                    if (!backgroundPlaybackRef.current) return;
+                    const current = media();
+                    backgroundPlaybackRef.current = false;
+                    if (!current) return;
+                    current.muted = false;
+                    if (Number.isFinite(backgroundAudio?.duration))
+                        current.currentTime = backgroundAudio?.duration ?? current.currentTime;
+                    setPlaying(false);
+                    setMediaSessionState("paused");
+                    onEnded(current);
+                };
+                const onVisibilityChange = () => {
+                    if (document.visibilityState === "hidden")
+                        enterBackgroundPlayback();
+                    else leaveBackgroundPlayback();
+                };
+                const onPageHide = () => enterBackgroundPlayback();
+                const onPageShow = () => leaveBackgroundPlayback();
+                if (backgroundAudio) {
+                    backgroundAudio.addEventListener(
+                        "timeupdate",
+                        onBackgroundTimeUpdate
+                    );
+                    backgroundAudio.addEventListener("ended", onBackgroundEnded);
+                    document.addEventListener(
+                        "visibilitychange",
+                        onVisibilityChange
+                    );
+                    window.addEventListener("pagehide", onPageHide);
+                    window.addEventListener("pageshow", onPageShow);
+                    removeBackgroundListeners = () => {
+                        backgroundAudio.removeEventListener(
+                            "timeupdate",
+                            onBackgroundTimeUpdate
+                        );
+                        backgroundAudio.removeEventListener(
+                            "ended",
+                            onBackgroundEnded
+                        );
+                        document.removeEventListener(
+                            "visibilitychange",
+                            onVisibilityChange
+                        );
+                        window.removeEventListener("pagehide", onPageHide);
+                        window.removeEventListener("pageshow", onPageShow);
+                        backgroundAudio.pause();
+                        backgroundAudio.removeAttribute("src");
+                        backgroundAudio.load();
+                        backgroundAudio.remove();
+                        backgroundAudioRef.current = null;
+                        backgroundPlaybackRef.current = false;
+                    };
+                }
 
                 player.on("loadedmetadata", () => {
                     const current = media();
                     if (current) {
                         setLoading(false);
                         videoRef.current = current;
-                        current.setAttribute("playsinline", "true");
-                        current.setAttribute("webkit-playsinline", "true");
+                        prepareMediaElement(current);
                         onLoadedMetadata(current);
                         if (autoPlay || shouldAutoPlay.current) {
                             shouldAutoPlay.current = false;
@@ -1964,8 +2174,12 @@ function LessonPlayer(props: LessonPlayerProps) {
                 player.on("playing", () => setLoading(false));
                 player.on("play", () => {
                     setPlaying(true);
+                    setMediaSessionState("playing");
                     const current = media();
-                    if (current) onPlay(current);
+                    if (current) {
+                        warmBackgroundAudio(current);
+                        onPlay(current);
+                    }
                 });
                 player.on("timeupdate", () => {
                     const current = media();
@@ -1973,10 +2187,16 @@ function LessonPlayer(props: LessonPlayerProps) {
                 });
                 player.on("pause", () => {
                     setPlaying(false);
+                    setMediaSessionState("paused");
+                    if (backgroundAudio && !backgroundPlaybackRef.current)
+                        backgroundAudio.pause();
                     const current = media();
                     if (current) onPause(current);
                 });
                 player.on("ended", () => {
+                    if (backgroundAudio) backgroundAudio.pause();
+                    backgroundPlaybackRef.current = false;
+                    setMediaSessionState("paused");
                     const current = media();
                     if (current) onEnded(current);
                 });
@@ -2038,6 +2258,7 @@ function LessonPlayer(props: LessonPlayerProps) {
         return () => {
             disposed = true;
             removeFullscreenListeners();
+            removeBackgroundListeners();
             setPlaying(false);
             setIsFullscreen(false);
             videoRef.current = null;
@@ -2091,6 +2312,100 @@ function LessonPlayer(props: LessonPlayerProps) {
         if (player.isFullscreen()) player.exitFullscreen();
         else player.requestFullscreen();
     };
+    useEffect(() => {
+        const cleanTitle = lessonTitle.trim() || "GRE lesson";
+        const previousDocumentTitle = document.title;
+        document.title = `${cleanTitle} · GRE Study Desk`;
+
+        const mediaSession = (navigator as Navigator & {
+            mediaSession?: any;
+        }).mediaSession;
+        const MediaMetadataConstructor = (
+            window as Window & { MediaMetadata?: any }
+        ).MediaMetadata;
+        if (!mediaSession || !MediaMetadataConstructor) {
+            return () => {
+                document.title = previousDocumentTitle;
+            };
+        }
+
+        const metadata = new MediaMetadataConstructor({
+            title: cleanTitle,
+            artist: "GRE Study Desk",
+            album: collectionTitle?.trim() || "GRE Lessons",
+        });
+        mediaSession.metadata = metadata;
+        const activeMedia = () =>
+            backgroundPlaybackRef.current
+                ? backgroundAudioRef.current
+                : videoRef.current;
+        const setActionHandler = (action: string, handler: any) => {
+            try {
+                mediaSession.setActionHandler(action, handler);
+            } catch {}
+        };
+        const seek = (amount: number) => {
+            const current = activeMedia();
+            if (!current) return;
+            const duration = Number.isFinite(current.duration)
+                ? current.duration
+                : Number.MAX_SAFE_INTEGER;
+            current.currentTime = Math.max(
+                0,
+                Math.min(duration, current.currentTime + amount)
+            );
+        };
+        setActionHandler("play", () => activeMedia()?.play().catch(() => {}));
+        setActionHandler("pause", () => activeMedia()?.pause());
+        setActionHandler("seekbackward", (details: any) =>
+            seek(-(details.seekOffset ?? 10))
+        );
+        setActionHandler("seekforward", (details: any) =>
+            seek(details.seekOffset ?? 10)
+        );
+        setActionHandler("seekto", (details: any) => {
+            const current = activeMedia();
+            if (!current || !Number.isFinite(details.seekTime)) return;
+            if (details.fastSeek && "fastSeek" in current)
+                current.fastSeek(details.seekTime);
+            else current.currentTime = details.seekTime;
+        });
+        setActionHandler(
+            "previoustrack",
+            previous?.id && onSelectLesson
+                ? () => onSelectLesson(previous.id)
+                : null
+        );
+        setActionHandler(
+            "nexttrack",
+            next?.id && onSelectLesson
+                ? () => onSelectLesson(next.id)
+                : null
+        );
+
+        return () => {
+            [
+                "play",
+                "pause",
+                "seekbackward",
+                "seekforward",
+                "seekto",
+                "previoustrack",
+                "nexttrack",
+            ].forEach((action) => setActionHandler(action, null));
+            if (mediaSession.metadata === metadata) {
+                mediaSession.metadata = null;
+                mediaSession.playbackState = "none";
+            }
+            document.title = previousDocumentTitle;
+        };
+    }, [
+        videoId,
+        lessonTitle,
+        collectionTitle,
+        previous?.id,
+        next?.id,
+    ]);
     return (
         <div
             ref={containerRef}
@@ -2825,6 +3140,8 @@ function LearnPlayer({
                     src={`/api/media/course/${encodeURIComponent(
                         video.mediaId
                     )}`}
+                    lessonTitle={video.title}
+                    collectionTitle={activeCategory?.title ?? course.title}
                     videoRef={videoRef}
                     playbackRate={playbackRate}
                     onPlaybackRateChange={(rate) => {
