@@ -25,7 +25,11 @@ import {
     Minimize,
     Monitor,
     Moon,
+    NotebookPen,
+    Plus,
+    Pencil,
     Pause,
+    Pin,
     Play,
     RefreshCw,
     Rewind,
@@ -83,6 +87,20 @@ type Bootstrap = {
         updatedAt?: string;
     }>;
 };
+type Note = {
+    id: string;
+    title: string;
+    bodyHtml: string;
+    subject: Subject;
+    sourceType: "lesson" | "question" | "general";
+    sourceId: string | null;
+    sourceTitle: string | null;
+    category: string | null;
+    tags: string[];
+    createdAt: string;
+    updatedAt: string;
+};
+type NoteContext = Omit<Note, "id" | "title" | "bodyHtml" | "tags" | "createdAt" | "updatedAt">;
 const initialCatalogs: Catalogs = {
     questions: { quant: [], verbal: [] },
     videos: {
@@ -1601,6 +1619,96 @@ function GreCalculator({
     );
 }
 
+function NoteEditor({ note, context, onSave, onCancel }: { note?: Note; context: NoteContext; onSave: (data: Omit<Note, "id" | "createdAt" | "updatedAt">) => void; onCancel: () => void }) {
+    const editorRef = useRef<HTMLDivElement>(null);
+    const [title, setTitle] = useState(note?.title ?? "");
+    const [tags, setTags] = useState(note?.tags.join(", ") ?? "");
+    const [entry, setEntry] = useState<"link" | "math" | null>(null);
+    const [entryValue, setEntryValue] = useState("");
+    useEffect(() => { if (editorRef.current) editorRef.current.innerHTML = note?.bodyHtml ?? ""; }, [note]);
+    const format = (command: string, value?: string) => {
+        editorRef.current?.focus(); document.execCommand(command, false, value);
+    };
+    const insertEntry = () => {
+        const value = entryValue.trim();
+        if (!value) return;
+        format(entry === "link" ? "createLink" : "insertText", entry === "link" ? value : `\\(${value}\\)`);
+        setEntry(null); setEntryValue("");
+    };
+    const handleEditorKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!event.ctrlKey && !event.metaKey) return;
+        const key = event.key.toLowerCase();
+        if (key === "b" || key === "i") { event.preventDefault(); format(key === "b" ? "bold" : "italic"); }
+        if (key === "k") { event.preventDefault(); setEntry("link"); }
+        if (key === "g" && event.shiftKey) { event.preventDefault(); format("insertUnorderedList"); }
+        if (key === "m" && event.shiftKey) { event.preventDefault(); setEntry("math"); }
+        if (key === "enter") { event.preventDefault(); (event.currentTarget.closest("form") as HTMLFormElement)?.requestSubmit(); }
+    };
+    const submit = (event: React.FormEvent) => {
+        event.preventDefault();
+        onSave({ title: title.trim() || "Untitled note", bodyHtml: editorRef.current?.innerHTML ?? "", subject: note?.subject ?? context.subject, sourceType: note?.sourceType ?? context.sourceType, sourceId: note?.sourceId ?? context.sourceId, sourceTitle: note?.sourceTitle ?? context.sourceTitle, category: note?.category ?? context.category, tags: [...new Set(tags.split(",").map((tag) => tag.trim()).filter(Boolean))] });
+    };
+    return <form className="note-editor" onSubmit={submit}>
+        <input className="note-title-input" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); editorRef.current?.focus(); } }} placeholder="Note title" aria-label="Note title" autoFocus />
+        <div className="note-format-bar" aria-label="Formatting tools">
+            <button type="button" tabIndex={-1} onClick={() => format("bold")} title="Bold (Ctrl+B)"><b>B</b></button>
+            <button type="button" tabIndex={-1} onClick={() => format("italic")} title="Italic (Ctrl+I)"><i>I</i></button>
+            <button type="button" tabIndex={-1} onClick={() => format("insertUnorderedList")} title="Bulleted list (Ctrl+Shift+G)">•</button>
+            <button type="button" tabIndex={-1} onClick={() => setEntry("link")} title="Add link (Ctrl+K)">&lt;&gt;</button>
+            <button type="button" tabIndex={-1} onClick={() => setEntry("math")} title="Insert math (Ctrl+Shift+M)">ƒx</button>
+        </div>
+        <div ref={editorRef} className="note-body-editor" contentEditable suppressContentEditableWarning onKeyDown={handleEditorKeys} data-placeholder="Write a thought, a rule, or a question…" />
+        <div className="note-editor-meta">
+            <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" aria-label="Tags" />
+        </div>
+        <div className="note-editor-actions"><button type="button" className="text-button" onClick={onCancel}>Cancel</button><button className="primary">Save note</button></div>
+        {entry && <div className="note-popup-backdrop" role="presentation"><section className="note-popup" role="dialog" aria-modal="true"><h3>{entry === "link" ? "Add link" : "Insert math"}</h3><p>{entry === "link" ? "Paste a complete URL." : "Enter a LaTex expression, for example: \\frac{a}{b}"}</p><input autoFocus value={entryValue} onChange={(e) => setEntryValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") insertEntry(); if (e.key === "Escape") setEntry(null); }} placeholder={entry === "link" ? "https://…" : "\\frac{x^2}{2}"} /><div><button type="button" onClick={() => setEntry(null)}>Cancel</button><button type="button" className="primary" onClick={insertEntry}>Insert</button></div></section></div>}
+    </form>;
+}
+function NoteCard({ note, onEdit, onDelete, onOpen }: { note: Note; onEdit: (note: Note) => void; onDelete: (note: Note) => void; onOpen?: (note: Note) => void }) {
+    return <article className={`note-card ${onOpen ? "is-clickable" : ""}`} onClick={() => onOpen?.(note)}><div className="note-card-head"><div><span className="note-source">{note.sourceType === "general" ? "Standalone" : `${note.subject === "quant" ? "Quant" : "Verbal"} · ${note.sourceType}`}</span><h3>{note.title}</h3></div><div className="note-card-actions"><button onClick={(event) => { event.stopPropagation(); onEdit(note); }} aria-label={`Edit ${note.title}`}><Pencil size={15}/></button><button onClick={(event) => { event.stopPropagation(); onDelete(note); }} aria-label={`Delete ${note.title}`}><Trash2 size={15}/></button></div></div>{note.sourceTitle && <p className="note-linked-to">{note.sourceTitle}</p>}<Html value={note.bodyHtml || "<em>Empty note</em>"}/><footer>{note.tags.map((tag) => <span key={tag} className="note-tag">{tag}</span>)}<time>{new Date(note.updatedAt).toLocaleDateString()}</time></footer></article>;
+}
+function NoteConfirm({ action, note, onCancel, onConfirm }: { action: "edit" | "delete"; note: Note; onCancel: () => void; onConfirm: () => void }) {
+    return <div className="note-popup-backdrop"><section className="note-popup note-confirm" role="dialog" aria-modal="true" aria-labelledby="note-confirm-title"><h3 id="note-confirm-title">{action === "delete" ? "Delete note?" : "Edit note?"}</h3><p>{action === "delete" ? `“${note.title}” will be permanently removed.` : `Open “${note.title}” for editing?`}</p><div><button onClick={onCancel}>Cancel</button><button className={action === "delete" ? "danger-button" : "primary"} onClick={onConfirm}>{action === "delete" ? "Delete" : "Edit note"}</button></div></section></div>;
+}
+function NotesWorkspace({ context, user, expanded, onOpen, onClose }: { context: NoteContext; user: { id: string } | null; expanded: boolean; onOpen: () => void; onClose: () => void }) {
+    const [notes, setNotes] = useState<Note[]>([]), [editing, setEditing] = useState<Note | undefined>(), [creating, setCreating] = useState(false), [loaded, setLoaded] = useState(false), [confirmation, setConfirmation] = useState<{action:"edit"|"delete"; note: Note} | null>(null), [pinned, setPinned] = useState(false);
+    const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cancelScheduledClose = () => {
+        if (closeTimer.current) clearTimeout(closeTimer.current);
+        closeTimer.current = null;
+    };
+    const openDrawer = () => { cancelScheduledClose(); onOpen(); };
+    const closeAfterOpening = () => {
+        if (pinned) return;
+        cancelScheduledClose();
+        closeTimer.current = setTimeout(() => { onClose(); closeTimer.current = null; }, 240);
+    };
+    useEffect(() => () => cancelScheduledClose(), []);
+    const load = useCallback(async () => { if (!user) { setNotes([]); setLoaded(true); return; } try { const data = await api("/api/me/notes"); setNotes(data.notes); } finally { setLoaded(true); } }, [user]);
+    useEffect(() => { load(); }, [load]);
+    const save = async (data: Omit<Note, "id" | "createdAt" | "updatedAt">) => { const result = await api(editing ? `/api/me/notes/${editing.id}` : "/api/me/notes", { method: editing ? "PUT" : "POST", body: JSON.stringify(data) }); const saved = result.note as Note; setNotes((all) => [saved, ...all.filter((item) => item.id !== saved.id)]); setEditing(undefined); setCreating(false); };
+    const remove = async (note: Note) => { await api(`/api/me/notes/${note.id}`, { method: "DELETE" }); setNotes((all) => all.filter((item) => item.id !== note.id)); };
+    const scoped = context.sourceId ? notes.filter((note) => note.sourceType === context.sourceType && note.sourceId === context.sourceId) : notes;
+    useEffect(() => { if (!expanded) return; const key = (event: KeyboardEvent) => { if (event.ctrlKey || event.metaKey || (event.target as HTMLElement)?.matches("input, textarea, [contenteditable=true]")) return; if (event.key.toLowerCase() === "a") { event.preventDefault(); setCreating(true); } if (event.key.toLowerCase() === "p") { event.preventDefault(); setPinned((value) => !value); } }; addEventListener("keydown", key); return () => removeEventListener("keydown", key); }, [expanded]);
+    return <aside className={`notes-drawer ${expanded ? "is-open" : ""} ${pinned ? "is-pinned" : ""}`} aria-label="Notes" onMouseEnter={cancelScheduledClose} onMouseLeave={closeAfterOpening}>
+        <button className="notes-drawer-handle" onMouseEnter={openDrawer} onFocus={openDrawer} onClick={openDrawer} aria-label="Open notes"><NotebookPen size={18}/><span>Notes</span></button>
+        <div className="notes-drawer-content"><header><div><span className="eyebrow">{context.sourceType === "general" ? "Quick notes" : context.sourceType === "lesson" ? "Lesson notes" : "Question notes"}</span><h2>{context.sourceTitle ?? "Notes"}</h2>{context.category && <p className="note-category">{context.category}</p>}</div><div className="notes-header-actions"><button className={`icon-close ${pinned ? "active" : ""}`} onClick={() => setPinned((value) => !value)} aria-label={pinned ? "Unpin notes" : "Pin notes"} title={`${pinned ? "Unpin" : "Pin"} notes (P)`}><Pin size={17}/></button><button className="icon-close" onClick={onClose} aria-label="Close notes"><X size={18}/></button></div></header>{!user ? <p className="note-signin">Sign in from Account to save notes and keep them across devices.</p> : creating || editing ? <NoteEditor note={editing} context={context} onSave={save} onCancel={() => { setCreating(false); setEditing(undefined); }} /> : <><button className="new-note" onClick={() => setCreating(true)}><Plus size={17}/> New note <kbd>A</kbd></button>{loaded && scoped.length === 0 ? <p className="notes-empty">No notes here yet.</p> : <div className="notes-list">{scoped.map((note) => <NoteCard key={note.id} note={note} onEdit={(item) => setConfirmation({action:"edit",note:item})} onDelete={(item) => setConfirmation({action:"delete",note:item})}/>)}</div>}</>}</div>
+        {confirmation && <NoteConfirm {...confirmation} onCancel={() => setConfirmation(null)} onConfirm={() => { const item = confirmation.note; if (confirmation.action === "delete") remove(item); else {setEditing(item); setCreating(false);} setConfirmation(null); }}/>}</aside>;
+}
+function NotesLibrary({ user, context }: { user: { id: string } | null; context: NoteContext }) {
+    const [notes, setNotes] = useState<Note[]>([]), [query, setQuery] = useState(""), [subject, setSubject] = useState<"all" | Subject>("all"), [editing, setEditing] = useState<Note | undefined>(), [creating, setCreating] = useState(false), [viewing, setViewing] = useState<Note | null>(null), [confirmation, setConfirmation] = useState<{action:"edit"|"delete"; note:Note} | null>(null);
+    const load = useCallback(async () => { if (user) setNotes((await api("/api/me/notes")).notes); }, [user]); useEffect(() => { load(); }, [load]);
+    const save = async (data: Omit<Note, "id" | "createdAt" | "updatedAt">) => { const result = await api(editing ? `/api/me/notes/${editing.id}` : "/api/me/notes", {method: editing ? "PUT" : "POST", body: JSON.stringify(data)}); const saved = result.note as Note; setNotes((all) => [saved, ...all.filter((n) => n.id !== saved.id)]); setEditing(undefined); setCreating(false); };
+    const remove = async (note: Note) => { await api(`/api/me/notes/${note.id}`, {method:"DELETE"}); setNotes((all) => all.filter((n) => n.id !== note.id)); };
+    const filtered = notes.filter((note) => (subject === "all" || note.subject === subject) && `${note.title} ${note.bodyHtml} ${note.tags.join(" ")} ${note.sourceTitle ?? ""}`.toLowerCase().includes(query.toLowerCase()));
+    const exportNotes = () => {
+        const content = JSON.stringify(filtered, null, 2);
+        const href = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+        const link = document.createElement("a"); link.href = href; link.download = "greprep-notes.json"; link.click(); URL.revokeObjectURL(href);
+    };
+    return <section className="notes-library"><div className="page-intro"><span className="eyebrow">Your study system</span><h1>Notes</h1><p>Everything you capture is labelled by subject and linked back to its lesson or question.</p></div>{!user ? <section className="empty"><NotebookPen size={30}/><h2>Sign in to start taking notes</h2><p>Your notes are private and sync across devices.</p></section> : creating || editing ? <section className="notes-library-editor"><h2>{editing ? "Edit note" : "New note"}</h2><NoteEditor note={editing} context={context} onSave={save} onCancel={() => {setCreating(false); setEditing(undefined);}}/></section> : <><div className="notes-library-tools"><label><Search size={17}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search notes, tags, lessons…" /></label><select value={subject} onChange={(e) => setSubject(e.target.value as "all" | Subject)}><option value="all">All subjects</option><option value="quant">Quant</option><option value="verbal">Verbal</option></select><button className="export-notes" onClick={exportNotes} disabled={!filtered.length}><Download size={16}/> Export</button><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> Add note</button></div><p className="notes-result-count">{filtered.length} {filtered.length === 1 ? "note" : "notes"}</p><div className="notes-library-grid">{filtered.map((note) => <NoteCard key={note.id} note={note} onOpen={setViewing} onDelete={(item) => setConfirmation({action:"delete",note:item})} onEdit={(item) => setConfirmation({action:"edit",note:item})}/>)}</div></>}{viewing && <div className="note-popup-backdrop" onMouseDown={() => setViewing(null)}><article className="note-view-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><button className="icon-close" onClick={() => setViewing(null)}><X size={18}/></button><NoteCard note={viewing} onEdit={(item) => {setViewing(null); setConfirmation({action:"edit",note:item});}} onDelete={(item) => {setViewing(null); setConfirmation({action:"delete",note:item});}}/></article></div>}{confirmation && <NoteConfirm {...confirmation} onCancel={() => setConfirmation(null)} onConfirm={() => { const item=confirmation.note; if (confirmation.action === "delete") remove(item); else {setEditing(item); setCreating(false);} setConfirmation(null); }}/>}</section>;
+}
 function App() {
     const [catalogs, setCatalogs] = useState<Catalogs>(initialCatalogs),
         [boot, setBoot] = useState<Bootstrap>({
@@ -1624,7 +1732,9 @@ function App() {
         ),
         [locationVersion, setLocationVersion] = useState(0),
         [scratchPadOpen, setScratchPadOpen] = useState(false),
-        [calculatorOpen, setCalculatorOpen] = useState(false);
+        [calculatorOpen, setCalculatorOpen] = useState(false),
+        [notesOpen, setNotesOpen] = useState(false),
+        [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
     const pwa = usePwa();
     const rememberedRoutes = useRef({ learn: "/learn", practice: "/practice" });
     const spaceHoldRef = useRef<{
@@ -1781,6 +1891,21 @@ function App() {
             ),
         [catalogs]
     );
+    const noteContext = useMemo<NoteContext>(() => {
+        if (route === "learn/video") {
+            const subject = getParam("subject", "quant") as Subject;
+            const video = catalogs.videos[subject].categories.flatMap((category) => category.videos).find((item) => item.id === getParam("video", ""));
+            const category = catalogs.videos[subject].categories.find((item) => item.id === video?.categoryId);
+            return { subject, sourceType: "lesson", sourceId: video?.id ?? null, sourceTitle: video?.title ?? "Lesson", category: category?.title ?? null };
+        }
+        if (route === "practice/question") {
+            const subject = getParam("subject", "quant") as Subject;
+            const question = catalogs.questions[subject].find((item) => item.id === getParam("question", ""));
+            return { subject, sourceType: "question", sourceId: question?.id ?? null, sourceTitle: question?.title ?? "Question", category: question?.category ?? null };
+        }
+        return { subject: "quant", sourceType: "general", sourceId: null, sourceTitle: "Standalone notes", category: null };
+    }, [route, locationVersion, catalogs]);
+    useEffect(() => { const update = () => setIsFullscreen(Boolean(document.fullscreenElement)); document.addEventListener("fullscreenchange", update); return () => document.removeEventListener("fullscreenchange", update); }, []);
     useEffect(() => {
         let pending = false;
         const timer = () => {
@@ -1858,6 +1983,11 @@ function App() {
             ) {
                 event.preventDefault();
                 setCalculatorOpen(true);
+                return;
+            }
+            if ((route === "learn/video" || route === "practice/question") && keyLower === "j" && !isTyping && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                event.preventDefault();
+                setNotesOpen((open) => !open);
                 return;
             }
             if (
@@ -2132,6 +2262,7 @@ function App() {
                 onInstall={pwa.install}
                 canInstall={Boolean(pwa.installEvent)}
             />
+            {route !== "notes" && (route === "learn/video" || route === "practice/question") && !isFullscreen && <><button className="notes-fab" onClick={() => setNotesOpen(true)} aria-label="Open notes" title="Notes (J)"><NotebookPen size={20}/><span>Notes</span></button><NotesWorkspace context={noteContext} user={user} expanded={notesOpen} onOpen={() => setNotesOpen(true)} onClose={() => setNotesOpen(false)} /></>}
             {!online && (
                 <div className="offline-bar" role="status">
                     <WifiOff size={15} /> You are offline — downloaded lessons,
@@ -2209,6 +2340,8 @@ function App() {
                         mutate={mutate}
                         onProgress={handleMemorizeProgress}
                     />
+                ) : route === "notes" ? (
+                    <NotesLibrary user={user} context={noteContext} />
                 ) : route === "account" ? (
                     <Account
                         user={user}
@@ -2244,6 +2377,7 @@ function Nav({
         { id: "dashboard", label: "Home", icon: House },
         { id: "learn", label: "Learn", icon: BookOpen },
         { id: "practice", label: "Practice", icon: Target },
+        { id: "notes", label: "Notes", icon: NotebookPen },
         { id: "memorize", label: "Memorize", icon: Brain },
         { id: "account", label: "Account", icon: CircleUserRound },
     ];
@@ -2273,7 +2407,7 @@ function Nav({
                         className="nav-links"
                         aria-label="Primary navigation"
                     >
-                        {links.slice(0, 4).map((link) => {
+                        {links.slice(0, 5).map((link) => {
                             if (link.id === "memorize") {
                                 return (
                                     <div

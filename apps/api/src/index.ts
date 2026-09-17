@@ -40,10 +40,13 @@ CREATE TABLE IF NOT EXISTS video_progress (user_id TEXT NOT NULL, video_id TEXT 
 CREATE TABLE IF NOT EXISTS memorize_progress (user_id TEXT NOT NULL, source TEXT NOT NULL, group_slug TEXT NOT NULL, item_slug TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('G','R')), updated_at TEXT NOT NULL, PRIMARY KEY(user_id,source,group_slug,item_slug));
 CREATE TABLE IF NOT EXISTS question_attempts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, question_id TEXT NOT NULL, selected_choice_ids TEXT NOT NULL, correct INTEGER NOT NULL, score REAL NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, submitted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS question_state (user_id TEXT NOT NULL, question_id TEXT NOT NULL, bookmarked INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,question_id));
+CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL, body_html TEXT NOT NULL, subject TEXT NOT NULL CHECK(subject IN ('quant','verbal')), source_type TEXT NOT NULL CHECK(source_type IN ('lesson','question','general')), source_id TEXT, source_title TEXT, category TEXT, tags TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_active_user_idx ON sessions (user_id, expires_at);
 CREATE INDEX IF NOT EXISTS video_progress_user_idx ON video_progress (user_id, updated_at);
 CREATE INDEX IF NOT EXISTS memorize_progress_user_idx ON memorize_progress (user_id, updated_at);
 CREATE INDEX IF NOT EXISTS question_attempts_user_idx ON question_attempts (user_id, submitted_at);
+CREATE INDEX IF NOT EXISTS notes_user_updated_idx ON notes (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS notes_user_source_idx ON notes (user_id, source_type, source_id);
 `);
 
 const app = express();
@@ -625,6 +628,59 @@ app.put(
         }
     }
 );
+
+const NoteInputSchema = z.object({
+    title: z.string().trim().min(1).max(180),
+    bodyHtml: z.string().max(100_000).default(""),
+    subject: z.enum(["quant", "verbal"]),
+    sourceType: z.enum(["lesson", "question", "general"]),
+    sourceId: z.string().max(500).nullable().optional(),
+    sourceTitle: z.string().max(500).nullable().optional(),
+    category: z.string().trim().max(180).nullable().optional(),
+    tags: z.array(z.string().trim().min(1).max(50)).max(20).default([]),
+});
+const noteRow = (row: any) => ({
+    ...row,
+    bodyHtml: row.bodyHtml,
+    sourceType: row.sourceType,
+    sourceId: row.sourceId,
+    sourceTitle: row.sourceTitle,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    tags: JSON.parse(row.tags || "[]"),
+});
+app.get("/api/me/notes", requireUser, (req, res, next) => {
+    try {
+        const rows = db.prepare(`SELECT id, title, body_html AS bodyHtml, subject, source_type AS sourceType, source_id AS sourceId, source_title AS sourceTitle, category, tags, created_at AS createdAt, updated_at AS updatedAt FROM notes WHERE user_id = ? ORDER BY updated_at DESC`).all(req.user!.id);
+        res.json({ notes: rows.map(noteRow) });
+    } catch (error) { next(error); }
+});
+app.post("/api/me/notes", requireUser, (req, res, next) => {
+    try {
+        const input = NoteInputSchema.parse(req.body);
+        const id = uid(), timestamp = now();
+        db.prepare("INSERT INTO notes (id,user_id,title,body_html,subject,source_type,source_id,source_title,category,tags,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(id, req.user!.id, input.title, input.bodyHtml, input.subject, input.sourceType, input.sourceId ?? null, input.sourceTitle ?? null, input.category ?? null, JSON.stringify(input.tags), timestamp, timestamp);
+        const row = db.prepare("SELECT id, title, body_html AS bodyHtml, subject, source_type AS sourceType, source_id AS sourceId, source_title AS sourceTitle, category, tags, created_at AS createdAt, updated_at AS updatedAt FROM notes WHERE id = ?").get(id);
+        res.status(201).json({ note: noteRow(row) });
+    } catch (error) { next(error); }
+});
+app.put("/api/me/notes/:noteId", requireUser, (req, res, next) => {
+    try {
+        const input = NoteInputSchema.parse(req.body), id = z.string().min(1).parse(req.params.noteId);
+        const result = db.prepare("UPDATE notes SET title=?, body_html=?, subject=?, source_type=?, source_id=?, source_title=?, category=?, tags=?, updated_at=? WHERE id=? AND user_id=?").run(input.title, input.bodyHtml, input.subject, input.sourceType, input.sourceId ?? null, input.sourceTitle ?? null, input.category ?? null, JSON.stringify(input.tags), now(), id, req.user!.id);
+        if (!result.changes) return res.status(404).json({ error: "Note not found." });
+        const row = db.prepare("SELECT id, title, body_html AS bodyHtml, subject, source_type AS sourceType, source_id AS sourceId, source_title AS sourceTitle, category, tags, created_at AS createdAt, updated_at AS updatedAt FROM notes WHERE id = ?").get(id);
+        res.json({ note: noteRow(row) });
+    } catch (error) { next(error); }
+});
+app.delete("/api/me/notes/:noteId", requireUser, (req, res, next) => {
+    try {
+        const id = z.string().min(1).parse(req.params.noteId);
+        const result = db.prepare("DELETE FROM notes WHERE id = ? AND user_id = ?").run(id, req.user!.id);
+        if (!result.changes) return res.status(404).json({ error: "Note not found." });
+        res.status(204).end();
+    } catch (error) { next(error); }
+});
 
 const mediaMap = () =>
     JSON.parse(
