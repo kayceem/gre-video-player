@@ -24,6 +24,7 @@ import {
     Maximize,
     Minimize,
     Monitor,
+    MoreHorizontal,
     Moon,
     NotebookPen,
     Plus,
@@ -71,6 +72,7 @@ type Bootstrap = {
         positionSeconds: number;
         watched: number;
         completed: number;
+        rewatchCount?: number;
     }>;
     attempts: Array<{
         questionId: string;
@@ -699,6 +701,27 @@ function MathText({ value }: { value: string }) {
 function pct(done: number, total: number) {
     return total ? Math.round((done / total) * 100) : 0;
 }
+function RewatchTally({ count }: { count: number }) {
+    if (!count) return null;
+    const groups = Math.floor(count / 5);
+    const remainder = count % 5;
+    return (
+        <span
+            className="rewatch-tally"
+            aria-label={`Rewatched ${count} ${count === 1 ? "time" : "times"}`}
+            title={`Rewatched ${count} ${count === 1 ? "time" : "times"}`}
+        >
+            {Array.from({ length: groups }, (_, index) => (
+                <span key={`group-${index}`} className="rewatch-group-dot">
+                    •
+                </span>
+            ))}
+            {Array.from({ length: remainder }, (_, index) => (
+                <Check key={`rewatch-${index}`} size={15} aria-hidden="true" />
+            ))}
+        </span>
+    );
+}
 const skipVideo = (
     element: HTMLVideoElement | null | undefined,
     amount: number
@@ -954,7 +977,9 @@ function ScratchPad({
         const previousOverflow = document.body.style.overflow;
         const backgroundElements = backdropRef.current?.parentElement
             ? Array.from(backdropRef.current.parentElement.children).filter(
-                  (element) => element !== backdropRef.current
+                  (element) =>
+                      element !== backdropRef.current &&
+                      !element.classList.contains("gre-calculator")
               )
             : [];
         const previousInert = backgroundElements.map((element) => ({
@@ -977,6 +1002,7 @@ function ScratchPad({
     useEffect(() => {
         if (!open) return;
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.defaultPrevented) return;
             const key = event.key.toLowerCase();
             if (key === "c") {
                 event.preventDefault();
@@ -1144,7 +1170,10 @@ const evaluateGreExpression = (expression: string) => {
 const formatGreNumber = (value: number) => {
     if (!Number.isFinite(value))
         throw new GreCalculatorError("The result is too large.");
-    return String(value);
+    // Match the calculator display: round to six digits after the decimal
+    // point, without padding whole numbers or terminating decimals.
+    const rounded = Number(value.toFixed(6));
+    return String(Object.is(rounded, -0) ? 0 : rounded);
 };
 
 function GreCalculator({
@@ -1234,6 +1263,26 @@ function GreCalculator({
         }
         const lastCharacter = result.slice(-1);
         const lastIsOperator = ["+", "-", "*", "/"].includes(lastCharacter);
+        const isBinaryOperator = ["+", "-", "*", "/"].includes(character);
+        // A newly entered operator commits the preceding complete expression.
+        // This keeps the display useful during chained calculations (13 + 3 -
+        // shows 16, ready for the next operand) instead of leaving it on 3.
+        if (
+            isBinaryOperator &&
+            result.length > 0 &&
+            !lastIsOperator &&
+            /[\d)]$/.test(result)
+        ) {
+            try {
+                const runningTotal = formatGreNumber(evaluateGreExpression(result));
+                updateResult(`${runningTotal}${character}`);
+                setMemoryRecalledForOperand(false);
+                return;
+            } catch (error) {
+                showError(error);
+                return;
+            }
+        }
         let currentOperandStart = result.length;
         while (
             currentOperandStart > 0 &&
@@ -1248,7 +1297,7 @@ function GreCalculator({
             next = result.slice(0, currentOperandStart) + character;
         } else if (character !== "." && result.endsWith(".")) {
             next += character;
-        } else if (["+", "-", "*", "/"].includes(character) && lastIsOperator) {
+        } else if (isBinaryOperator && lastIsOperator) {
             next = result.slice(0, -1) + character;
         } else if ((character === "/" || character === "*") && result.length === 0) {
             next = "";
@@ -1311,12 +1360,32 @@ function GreCalculator({
     };
     const calculateSquareRoot = () => {
         try {
-            const value = evaluateGreExpression(result);
+            // √ applies to the number currently on the display, not to the
+            // complete pending expression. For example, `13 / 2` becomes
+            // `13 / 1.414…`; division is deferred until another operator or
+            // equals is selected.
+            let operandStart = result.length;
+            while (operandStart > 0 && /[\d.]/.test(result[operandStart - 1]))
+                operandStart--;
+            if (
+                operandStart > 0 &&
+                result[operandStart - 1] === "-" &&
+                (operandStart === 1 ||
+                    ["+", "-", "*", "/", "("].includes(
+                        result[operandStart - 2]
+                    ))
+            )
+                operandStart--;
+            const operand = result.slice(operandStart);
+            if (!operand) throw new GreCalculatorError("Invalid expression.");
+            const value = evaluateGreExpression(operand);
             if (value < 0)
                 throw new GreCalculatorError(
                     "Cannot take the square root of a negative number."
                 );
-            updateResult(formatGreNumber(Math.sqrt(value)));
+            updateResult(
+                result.slice(0, operandStart) + formatGreNumber(Math.sqrt(value))
+            );
             setMemoryRecalledForOperand(false);
             clearMessage();
         } catch (error) {
@@ -1398,49 +1467,8 @@ function GreCalculator({
             copied ? "Text copied to clipboard!" : "Unable to copy display text."
         );
     };
-    const handleKeyDown = (event: KeyboardEvent) => {
-        if (!open) return;
-        const key = event.key;
-        if (key === "Escape") {
-            event.preventDefault();
-            onClose();
-        } else if (
-            /^\d$/.test(key) ||
-            [".", "+", "-", "*", "/", "(", ")"].includes(key)
-        ) {
-            event.preventDefault();
-            appendCharacter(key);
-        } else if (key === "Enter" || key === "=") {
-            event.preventDefault();
-            calculateResult();
-        } else if (
-            key.toLowerCase() === "c" &&
-            !event.metaKey &&
-            !event.ctrlKey &&
-            !event.altKey
-        ) {
-            event.preventDefault();
-            clearAll();
-        } else if (
-            key.toLowerCase() === "v" &&
-            !event.metaKey &&
-            !event.ctrlKey &&
-            !event.altKey
-        ) {
-            event.preventDefault();
-            setSize((current) =>
-                current === "small"
-                    ? "medium"
-                    : current === "medium"
-                      ? "large"
-                      : "small"
-            );
-        }
-    };
     useEffect(() => {
         if (!open) return;
-        window.addEventListener("keydown", handleKeyDown);
-        const focusDisplay = () => displayRef.current?.focus();
         const keepInViewport = () => {
             const panel = panelRef.current;
             if (!panel) return;
@@ -1453,11 +1481,9 @@ function GreCalculator({
                 return next.x === current.x && next.y === current.y ? current : next;
             });
         };
-        focusDisplay();
         keepInViewport();
         window.addEventListener("resize", keepInViewport);
         return () => {
-            window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("resize", keepInViewport);
         };
     }, [open, result, memory, size]);
@@ -1484,6 +1510,7 @@ function GreCalculator({
     ) => (
         <button
             type="button"
+            tabIndex={-1}
             className={className}
             onClick={onClick}
             aria-label={ariaLabel ?? label}
@@ -1500,6 +1527,7 @@ function GreCalculator({
             aria-modal="false"
             aria-label="GRE Calculator"
             style={{ left: position.x, top: position.y }}
+            onKeyDown={(event) => event.preventDefault()}
             onPointerDown={(event) => {
                 if (
                     event.button !== 0 ||
@@ -1544,7 +1572,7 @@ function GreCalculator({
                 role="textbox"
                 aria-readonly="true"
                 aria-label="Calculator display"
-                tabIndex={0}
+                tabIndex={-1}
             >
                 {memoryHasValue && <span className="gre-calculator-memory">M</span>}
                 <span>{displayValue}</span>
@@ -1610,6 +1638,7 @@ function GreCalculator({
             <div className="gre-calculator-row gre-calculator-transfer-row">
                 <input
                     type="button"
+                    tabIndex={-1}
                     value="Transfer Display"
                     id="gre-calculator-display-button"
                     onClick={transferDisplay}
@@ -1621,27 +1650,64 @@ function GreCalculator({
 
 function NoteEditor({ note, context, onSave, onCancel }: { note?: Note; context: NoteContext; onSave: (data: Omit<Note, "id" | "createdAt" | "updatedAt">) => void; onCancel: () => void }) {
     const editorRef = useRef<HTMLDivElement>(null);
+    const selectionRef = useRef<Range | null>(null);
     const [title, setTitle] = useState(note?.title ?? "");
     const [tags, setTags] = useState(note?.tags.join(", ") ?? "");
-    const [entry, setEntry] = useState<"link" | "math" | null>(null);
+    const [entry, setEntry] = useState<"link" | "math" | "note" | null>(null);
     const [entryValue, setEntryValue] = useState("");
+    const [availableNotes, setAvailableNotes] = useState<Note[]>([]);
     useEffect(() => { if (editorRef.current) editorRef.current.innerHTML = note?.bodyHtml ?? ""; }, [note]);
+    useEffect(() => { api("/api/me/notes").then((data) => setAvailableNotes(data.notes)).catch(() => setAvailableNotes([])); }, []);
     const format = (command: string, value?: string) => {
         editorRef.current?.focus(); document.execCommand(command, false, value);
+    };
+    const rememberEditorSelection = () => {
+        const selection = window.getSelection();
+        if (!selection?.rangeCount || !editorRef.current?.contains(selection.anchorNode)) return;
+        selectionRef.current = selection.getRangeAt(0).cloneRange();
+    };
+    const restoreEditorSelection = () => {
+        const range = selectionRef.current;
+        if (!range || !editorRef.current) return;
+        editorRef.current.focus();
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
     };
     const insertEntry = () => {
         const value = entryValue.trim();
         if (!value) return;
+        restoreEditorSelection();
         format(entry === "link" ? "createLink" : "insertText", entry === "link" ? value : `\\(${value}\\)`);
         setEntry(null); setEntryValue("");
     };
+    const insertNoteLink = (linkedNote: Note) => {
+        restoreEditorSelection();
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (!range) return;
+        const anchor = document.createElement("a");
+        anchor.href = `/notes?note=${encodeURIComponent(linkedNote.id)}`;
+        anchor.textContent = linkedNote.sourceTitle
+            ? `${linkedNote.sourceTitle} — ${linkedNote.title}`
+            : linkedNote.title;
+        range.deleteContents();
+        range.insertNode(anchor);
+        range.setStartAfter(anchor);
+        range.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        setEntry(null); setEntryValue("");
+    };
+    const noteMatches = availableNotes.filter((item) => item.id !== note?.id && `${item.title} ${item.tags.join(" ")} ${item.sourceTitle ?? ""}`.toLowerCase().includes(entryValue.trim().toLowerCase())).slice(0, 6);
     const handleEditorKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
         if (!event.ctrlKey && !event.metaKey) return;
         const key = event.key.toLowerCase();
         if (key === "b" || key === "i") { event.preventDefault(); format(key === "b" ? "bold" : "italic"); }
-        if (key === "k") { event.preventDefault(); setEntry("link"); }
+        if (key === "k") { event.preventDefault(); rememberEditorSelection(); setEntry("link"); }
+        if (key === "l" && event.shiftKey) { event.preventDefault(); rememberEditorSelection(); setEntry("note"); }
         if (key === "g" && event.shiftKey) { event.preventDefault(); format("insertUnorderedList"); }
-        if (key === "m" && event.shiftKey) { event.preventDefault(); setEntry("math"); }
+        if (key === "m" && event.shiftKey) { event.preventDefault(); rememberEditorSelection(); setEntry("math"); }
         if (key === "enter") { event.preventDefault(); (event.currentTarget.closest("form") as HTMLFormElement)?.requestSubmit(); }
     };
     const submit = (event: React.FormEvent) => {
@@ -1654,15 +1720,16 @@ function NoteEditor({ note, context, onSave, onCancel }: { note?: Note; context:
             <button type="button" tabIndex={-1} onClick={() => format("bold")} title="Bold (Ctrl+B)"><b>B</b></button>
             <button type="button" tabIndex={-1} onClick={() => format("italic")} title="Italic (Ctrl+I)"><i>I</i></button>
             <button type="button" tabIndex={-1} onClick={() => format("insertUnorderedList")} title="Bulleted list (Ctrl+Shift+G)">•</button>
-            <button type="button" tabIndex={-1} onClick={() => setEntry("link")} title="Add link (Ctrl+K)">&lt;&gt;</button>
-            <button type="button" tabIndex={-1} onClick={() => setEntry("math")} title="Insert math (Ctrl+Shift+M)">ƒx</button>
+            <button type="button" tabIndex={-1} onMouseDown={(event) => { event.preventDefault(); rememberEditorSelection(); }} onClick={() => setEntry("link")} title="Add link (Ctrl+K)">&lt;&gt;</button>
+            <button type="button" tabIndex={-1} onMouseDown={(event) => { event.preventDefault(); rememberEditorSelection(); }} onClick={() => setEntry("note")} title="Link a note (Ctrl+Shift+L)">↗</button>
+            <button type="button" tabIndex={-1} onMouseDown={(event) => { event.preventDefault(); rememberEditorSelection(); }} onClick={() => setEntry("math")} title="Insert math (Ctrl+Shift+M)">ƒx</button>
         </div>
         <div ref={editorRef} className="note-body-editor" contentEditable suppressContentEditableWarning onKeyDown={handleEditorKeys} data-placeholder="Write a thought, a rule, or a question…" />
         <div className="note-editor-meta">
             <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" aria-label="Tags" />
         </div>
         <div className="note-editor-actions"><button type="button" className="text-button" onClick={onCancel}>Cancel</button><button className="primary">Save note</button></div>
-        {entry && <div className="note-popup-backdrop" role="presentation"><section className="note-popup" role="dialog" aria-modal="true"><h3>{entry === "link" ? "Add link" : "Insert math"}</h3><p>{entry === "link" ? "Paste a complete URL." : "Enter a LaTex expression, for example: \\frac{a}{b}"}</p><input autoFocus value={entryValue} onChange={(e) => setEntryValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") insertEntry(); if (e.key === "Escape") setEntry(null); }} placeholder={entry === "link" ? "https://…" : "\\frac{x^2}{2}"} /><div><button type="button" onClick={() => setEntry(null)}>Cancel</button><button type="button" className="primary" onClick={insertEntry}>Insert</button></div></section></div>}
+        {entry && <div className="note-popup-backdrop" role="presentation"><section className="note-popup" role="dialog" aria-modal="true"><h3>{entry === "link" ? "Add link" : entry === "math" ? "Insert math" : "Link a note"}</h3><p>{entry === "link" ? "Paste a complete URL." : entry === "math" ? "Enter a LaTex expression, for example: \\frac{a}{b}" : "Search your notes, then choose one to insert a link."}</p><input autoFocus value={entryValue} onChange={(e) => setEntryValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && entry !== "note") insertEntry(); if (e.key === "Escape") setEntry(null); }} placeholder={entry === "link" ? "https://…" : entry === "math" ? "\\frac{x^2}{2}" : "Search notes…"} />{entry === "note" && <div className="note-link-results">{noteMatches.length ? noteMatches.map((item) => <button type="button" key={item.id} onClick={() => insertNoteLink(item)}><span><b>{item.sourceTitle ? `${item.sourceTitle} — ` : ""}{item.title}</b><small>{item.category ?? (item.sourceType === "general" ? "Standalone note" : item.sourceType)}</small></span><em>{item.subject === "quant" ? "Quant" : "Verbal"}</em></button>) : <p>No matching notes.</p>}</div>}<div><button type="button" onClick={() => setEntry(null)}>Cancel</button>{entry !== "note" && <button type="button" className="primary" onClick={insertEntry}>Insert</button>}</div></section></div>}
     </form>;
 }
 function NoteCard({ note, onEdit, onDelete, onOpen }: { note: Note; onEdit: (note: Note) => void; onDelete: (note: Note) => void; onOpen?: (note: Note) => void }) {
@@ -1688,17 +1755,33 @@ function NotesWorkspace({ context, user, expanded, onOpen, onClose }: { context:
     const load = useCallback(async () => { if (!user) { setNotes([]); setLoaded(true); return; } try { const data = await api("/api/me/notes"); setNotes(data.notes); } finally { setLoaded(true); } }, [user]);
     useEffect(() => { load(); }, [load]);
     const save = async (data: Omit<Note, "id" | "createdAt" | "updatedAt">) => { const result = await api(editing ? `/api/me/notes/${editing.id}` : "/api/me/notes", { method: editing ? "PUT" : "POST", body: JSON.stringify(data) }); const saved = result.note as Note; setNotes((all) => [saved, ...all.filter((item) => item.id !== saved.id)]); setEditing(undefined); setCreating(false); };
+    useEffect(() => {
+        window.dispatchEvent(new CustomEvent("gre-note-editor-state", { detail: { active: Boolean(creating || editing) } }));
+        return () => {
+            window.dispatchEvent(
+                new CustomEvent("gre-note-editor-state", {
+                    detail: { active: false },
+                })
+            );
+        };
+    }, [creating, editing]);
     const remove = async (note: Note) => { await api(`/api/me/notes/${note.id}`, { method: "DELETE" }); setNotes((all) => all.filter((item) => item.id !== note.id)); };
     const scoped = context.sourceId ? notes.filter((note) => note.sourceType === context.sourceType && note.sourceId === context.sourceId) : notes;
     useEffect(() => { if (!expanded) return; const key = (event: KeyboardEvent) => { if (event.ctrlKey || event.metaKey || (event.target as HTMLElement)?.matches("input, textarea, [contenteditable=true]")) return; if (event.key.toLowerCase() === "a") { event.preventDefault(); setCreating(true); } if (event.key.toLowerCase() === "p") { event.preventDefault(); setPinned((value) => !value); } }; addEventListener("keydown", key); return () => removeEventListener("keydown", key); }, [expanded]);
     return <aside className={`notes-drawer ${expanded ? "is-open" : ""} ${pinned ? "is-pinned" : ""}`} aria-label="Notes" onMouseEnter={cancelScheduledClose} onMouseLeave={closeAfterOpening}>
         <button className="notes-drawer-handle" onMouseEnter={openDrawer} onFocus={openDrawer} onClick={openDrawer} aria-label="Open notes"><NotebookPen size={18}/><span>Notes</span></button>
-        <div className="notes-drawer-content"><header><div><span className="eyebrow">{context.sourceType === "general" ? "Quick notes" : context.sourceType === "lesson" ? "Lesson notes" : "Question notes"}</span><h2>{context.sourceTitle ?? "Notes"}</h2>{context.category && <p className="note-category">{context.category}</p>}</div><div className="notes-header-actions"><button className={`icon-close ${pinned ? "active" : ""}`} onClick={() => setPinned((value) => !value)} aria-label={pinned ? "Unpin notes" : "Pin notes"} title={`${pinned ? "Unpin" : "Pin"} notes (P)`}><Pin size={17}/></button><button className="icon-close" onClick={onClose} aria-label="Close notes"><X size={18}/></button></div></header>{!user ? <p className="note-signin">Sign in from Account to save notes and keep them across devices.</p> : creating || editing ? <NoteEditor note={editing} context={context} onSave={save} onCancel={() => { setCreating(false); setEditing(undefined); }} /> : <><button className="new-note" onClick={() => setCreating(true)}><Plus size={17}/> New note <kbd>A</kbd></button>{loaded && scoped.length === 0 ? <p className="notes-empty">No notes here yet.</p> : <div className="notes-list">{scoped.map((note) => <NoteCard key={note.id} note={note} onEdit={(item) => setConfirmation({action:"edit",note:item})} onDelete={(item) => setConfirmation({action:"delete",note:item})}/>)}</div>}</>}</div>
+        <div className="notes-drawer-content"><header><div><span className="eyebrow">{context.sourceType === "general" ? "Quick notes" : context.sourceType === "lesson" ? "Lesson notes" : "Question notes"}</span><h2>{context.sourceTitle ?? "Notes"}</h2>{context.category && <p className="note-category">{context.category}</p>}</div><div className="notes-header-actions"><button className={`icon-close ${pinned ? "active" : ""}`} onClick={() => setPinned((value) => !value)} aria-label={pinned ? "Unpin notes" : "Pin notes"} title={`${pinned ? "Unpin" : "Pin"} notes (P)`}><Pin size={17}/></button><button className="icon-close" onClick={onClose} aria-label="Close notes"><X size={18}/></button></div></header>{!user ? <p className="note-signin">Sign in from Account to save notes and keep them across devices.</p> : creating || editing ? <NoteEditor note={editing} context={context} onSave={save} onCancel={() => { setCreating(false); setEditing(undefined); }} /> : <><button className="new-note" onClick={() => setCreating(true)}><Plus size={17}/> New note <kbd>A</kbd></button>{loaded && scoped.length === 0 ? <p className="notes-empty"></p> : <div className="notes-list">{scoped.map((note) => <NoteCard key={note.id} note={note} onEdit={(item) => setConfirmation({action:"edit",note:item})} onDelete={(item) => setConfirmation({action:"delete",note:item})}/>)}</div>}</>}</div>
         {confirmation && <NoteConfirm {...confirmation} onCancel={() => setConfirmation(null)} onConfirm={() => { const item = confirmation.note; if (confirmation.action === "delete") remove(item); else {setEditing(item); setCreating(false);} setConfirmation(null); }}/>}</aside>;
 }
 function NotesLibrary({ user, context }: { user: { id: string } | null; context: NoteContext }) {
     const [notes, setNotes] = useState<Note[]>([]), [query, setQuery] = useState(""), [subject, setSubject] = useState<"all" | Subject>("all"), [editing, setEditing] = useState<Note | undefined>(), [creating, setCreating] = useState(false), [viewing, setViewing] = useState<Note | null>(null), [confirmation, setConfirmation] = useState<{action:"edit"|"delete"; note:Note} | null>(null);
     const load = useCallback(async () => { if (user) setNotes((await api("/api/me/notes")).notes); }, [user]); useEffect(() => { load(); }, [load]);
+    useEffect(() => {
+        const linkedNoteId = getParam("note", "");
+        if (!linkedNoteId) return;
+        const linkedNote = notes.find((item) => item.id === linkedNoteId);
+        if (linkedNote) setViewing(linkedNote);
+    }, [notes]);
     const save = async (data: Omit<Note, "id" | "createdAt" | "updatedAt">) => { const result = await api(editing ? `/api/me/notes/${editing.id}` : "/api/me/notes", {method: editing ? "PUT" : "POST", body: JSON.stringify(data)}); const saved = result.note as Note; setNotes((all) => [saved, ...all.filter((n) => n.id !== saved.id)]); setEditing(undefined); setCreating(false); };
     const remove = async (note: Note) => { await api(`/api/me/notes/${note.id}`, {method:"DELETE"}); setNotes((all) => all.filter((n) => n.id !== note.id)); };
     const filtered = notes.filter((note) => (subject === "all" || note.subject === subject) && `${note.title} ${note.bodyHtml} ${note.tags.join(" ")} ${note.sourceTitle ?? ""}`.toLowerCase().includes(query.toLowerCase()));
@@ -1744,6 +1827,8 @@ function App() {
         timer: ReturnType<typeof setTimeout>;
         activated: boolean;
     } | null>(null);
+    const lastNotesFocusRef = useRef<HTMLElement | null>(null);
+    const lastPageFocusRef = useRef<HTMLElement | null>(null);
     const seekThrottleRef = useRef<{
         target: VideoSeekTarget;
         timestamp: number;
@@ -1834,6 +1919,16 @@ function App() {
             .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
             ?.setAttribute("content", theme === "dark" ? "#2a4fd0" : "#3662e3");
     }, [theme]);
+    useEffect(() => {
+        const rememberFocus = (event: FocusEvent) => {
+            const element = event.target as HTMLElement | null;
+            if (!element) return;
+            if (element.closest(".notes-drawer")) lastNotesFocusRef.current = element;
+            else lastPageFocusRef.current = element;
+        };
+        document.addEventListener("focusin", rememberFocus);
+        return () => document.removeEventListener("focusin", rememberFocus);
+    }, []);
     const go = (destination: string) => {
         rememberCurrentRoute();
         const target =
@@ -1956,38 +2051,54 @@ function App() {
             const isInteractiveTarget = target?.matches(
                 "input, textarea, select, button, a, video, [contenteditable=true]"
             );
-            if (scratchPadOpen) {
-                if (keyLower === "q" || event.key === "Escape") {
-                    event.preventDefault();
-                    setScratchPadOpen(false);
-                }
-                return;
-            }
-            if (calculatorOpen) {
-                if (event.key === "Escape") {
-                    event.preventDefault();
-                    setCalculatorOpen(false);
+            if (
+                (event.ctrlKey || event.metaKey) &&
+                event.shiftKey &&
+                keyLower === "x" &&
+                (route === "learn/video" || route === "practice/question")
+            ) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                const inNotes = Boolean(target?.closest(".notes-drawer"));
+                if (inNotes) {
+                    (target as HTMLElement | null)?.blur?.();
+                    requestAnimationFrame(() =>
+                        (lastPageFocusRef.current?.isConnected
+                            ? lastPageFocusRef.current
+                            : document.querySelector<HTMLElement>(
+                                  "#main-content"
+                              ))?.focus()
+                    );
+                } else {
+                    setNotesOpen(true);
+                    requestAnimationFrame(() => {
+                        const candidate = lastNotesFocusRef.current;
+                        if (candidate?.isConnected) candidate.focus();
+                        else
+                            document
+                                .querySelector<HTMLElement>(
+                                    ".notes-drawer .new-note, .notes-drawer [contenteditable=true]"
+                                )
+                                ?.focus();
+                    });
                 }
                 return;
             }
             const isTyping = Boolean(
                 target?.matches("input, textarea, select, [contenteditable=true]")
             );
+            if (isTyping) return;
             if (
                 !pending &&
-                keyLower === "c" &&
+                keyLower === "v" &&
+                !event.repeat &&
                 !isTyping &&
                 !event.metaKey &&
                 !event.ctrlKey &&
                 !event.altKey
             ) {
                 event.preventDefault();
-                setCalculatorOpen(true);
-                return;
-            }
-            if ((route === "learn/video" || route === "practice/question") && keyLower === "j" && !isTyping && !event.metaKey && !event.ctrlKey && !event.altKey) {
-                event.preventDefault();
-                setNotesOpen((open) => !open);
+                setCalculatorOpen((open) => !open);
                 return;
             }
             if (
@@ -1996,7 +2107,19 @@ function App() {
                 (!isInteractiveTarget || route === "learn/video")
             ) {
                 event.preventDefault();
-                setScratchPadOpen(true);
+                setScratchPadOpen((open) => !open);
+                return;
+            }
+            if (scratchPadOpen) {
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    setScratchPadOpen(false);
+                }
+                return;
+            }
+            if ((route === "learn/video" || route === "practice/question") && keyLower === "j" && !isTyping && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                event.preventDefault();
+                setNotesOpen((open) => !open);
                 return;
             }
             if (
@@ -2155,7 +2278,7 @@ function App() {
             if (event.key === "?") {
                 setNotice({
                     message:
-                        "C Calculator · Q Scratch pad · / Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · hold Space 2× · ← → Seek · F Fullscreen · M Mute",
+                        "V Calculator · Q Scratch pad · Ctrl/Cmd+Shift+X Toggle note focus · / Search · G L Learn · G P Practice · J/K Move · Enter Act · N Next · Space Play/Pause · hold Space 2× · ← → Seek · F Fullscreen · M Mute",
                     tone: "warning",
                 });
                 return;
@@ -2262,7 +2385,7 @@ function App() {
                 onInstall={pwa.install}
                 canInstall={Boolean(pwa.installEvent)}
             />
-            {route !== "notes" && (route === "learn/video" || route === "practice/question") && !isFullscreen && <><button className="notes-fab" onClick={() => setNotesOpen(true)} aria-label="Open notes" title="Notes (J)"><NotebookPen size={20}/><span>Notes</span></button><NotesWorkspace context={noteContext} user={user} expanded={notesOpen} onOpen={() => setNotesOpen(true)} onClose={() => setNotesOpen(false)} /></>}
+            {route !== "notes" && (route === "learn/video" || route === "practice/question") && !isFullscreen && <NotesWorkspace context={noteContext} user={user} expanded={notesOpen} onOpen={() => setNotesOpen(true)} onClose={() => setNotesOpen(false)} />}
             {!online && (
                 <div className="offline-bar" role="status">
                     <WifiOff size={15} /> You are offline — downloaded lessons,
@@ -2313,8 +2436,26 @@ function App() {
                                         positionSeconds,
                                         watched: Number(watched),
                                         completed: Number(completed),
+                                        rewatchCount:
+                                            current.videos.find(
+                                                (item) => item.videoId === videoId
+                                            )?.rewatchCount ?? 0,
                                     },
                                 ],
+                            }))
+                        }
+                        onRewatch={(videoId) =>
+                            setBoot((current) => ({
+                                ...current,
+                                videos: current.videos.map((item) =>
+                                    item.videoId === videoId
+                                        ? {
+                                              ...item,
+                                              rewatchCount:
+                                                  (item.rewatchCount ?? 0) + 1,
+                                          }
+                                        : item
+                                ),
                             }))
                         }
                     />
@@ -2373,6 +2514,7 @@ function Nav({
     onInstall: () => void;
     canInstall: boolean;
 }) {
+    const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
     const links = [
         { id: "dashboard", label: "Home", icon: House },
         { id: "learn", label: "Learn", icon: BookOpen },
@@ -2390,6 +2532,11 @@ function Nav({
         handleGo("memorize");
         setParams({ source });
     };
+    useEffect(() => setMobileMoreOpen(false), [route]);
+    const mobileLinks = links.filter((link) =>
+        ["dashboard", "learn", "practice", "memorize"].includes(link.id)
+    );
+    const mobileMoreActive = isActive("notes") || isActive("account");
     return (
         <>
             <header className="site-nav">
@@ -2531,7 +2678,7 @@ function Nav({
                 </div>
             </header>
             <nav className="tabbar" aria-label="Primary navigation mobile">
-                {links.map((link) => {
+                {mobileLinks.map((link) => {
                     const Icon = link.icon;
                     const active = isActive(link.id);
                     return (
@@ -2551,6 +2698,44 @@ function Nav({
                         </button>
                     );
                 })}
+                <div className="tabbar-more">
+                    <button
+                        className={`tabbar-item ${
+                            mobileMoreActive ? "active" : ""
+                        }`}
+                        onClick={() => setMobileMoreOpen((open) => !open)}
+                        aria-expanded={mobileMoreOpen}
+                        aria-haspopup="menu"
+                    >
+                        <MoreHorizontal size={20} aria-hidden="true" />
+                        <span>More</span>
+                    </button>
+                    {mobileMoreOpen && (
+                        <div className="tabbar-more-menu" role="menu">
+                            {links
+                                .filter((link) =>
+                                    ["notes", "account"].includes(link.id)
+                                )
+                                .map((link) => {
+                                    const Icon = link.icon;
+                                    const active = isActive(link.id);
+                                    return (
+                                        <button
+                                            key={link.id}
+                                            role="menuitem"
+                                            className={active ? "active" : ""}
+                                            onClick={() => {
+                                                setMobileMoreOpen(false);
+                                                handleGo(link.id);
+                                            }}
+                                        >
+                                            <Icon size={18} /> {link.label}
+                                        </button>
+                                    );
+                                })}
+                        </div>
+                    )}
+                </div>
             </nav>
         </>
     );
@@ -2781,6 +2966,7 @@ function LessonPlayer(props: LessonPlayerProps) {
     const shouldAutoPlay = useRef(false);
     const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const showControls = useCallback(() => {
+        if (scratchPadOpen) return;
         setControlsVisible(true);
         if (controlsTimerRef.current) {
             clearTimeout(controlsTimerRef.current);
@@ -2789,8 +2975,14 @@ function LessonPlayer(props: LessonPlayerProps) {
             setControlsVisible(false);
             controlsTimerRef.current = null;
         }, 2000);
-    }, []);
+    }, [scratchPadOpen]);
     useEffect(() => {
+        if (scratchPadOpen) {
+            if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+            controlsTimerRef.current = null;
+            setControlsVisible(false);
+            return;
+        }
         showControls();
         return () => {
             if (controlsTimerRef.current) {
@@ -2798,7 +2990,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                 controlsTimerRef.current = null;
             }
         };
-    }, [videoId, showControls]);
+    }, [videoId, scratchPadOpen, showControls]);
     useEffect(() => {
         const host = hostRef.current;
         if (!host) return;
@@ -2819,7 +3011,7 @@ function LessonPlayer(props: LessonPlayerProps) {
                     controls: true,
                     preload: "auto",
                     playsinline: true,
-                    playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
+                    playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4],
                     controlBar: {
                         children: [
                             "playToggle",
@@ -3330,7 +3522,9 @@ function LessonPlayer(props: LessonPlayerProps) {
             ref={containerRef}
             className={`video-frame lesson-player library-player ${
                 loading ? "is-loading" : ""
-            } ${buffering ? "is-buffering" : ""}`}
+            } ${buffering ? "is-buffering" : ""} ${
+                scratchPadOpen ? "is-scratchpad-open" : ""
+            }`}
             aria-busy={loading || buffering}
             onMouseEnter={showControls}
             onMouseMove={showControls}
@@ -3340,7 +3534,7 @@ function LessonPlayer(props: LessonPlayerProps) {
             <div ref={hostRef} />
             <ScratchPad open={scratchPadOpen} onClose={onScratchPadClose} />
             <GreCalculator open={calculatorOpen} onClose={onCalculatorClose} />
-            {!loading && !buffering && (
+            {!loading && !buffering && !scratchPadOpen && (
                 <div
                     className={`lesson-video-overlay ${
                         controlsVisible ? "" : "controls-hidden"
@@ -3807,10 +4001,21 @@ function Learn({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
                                                             />
                                                         </span>
                                                         {completedIds.has(item.id) ? (
-                                                            <Check
-                                                                size={15}
-                                                                aria-label="Completed"
-                                                            />
+                                                            <span className="lesson-completion-status">
+                                                                <Check
+                                                                    size={15}
+                                                                    aria-label="Completed"
+                                                                />
+                                                                <RewatchTally
+                                                                    count={
+                                                                        progressById.get(
+                                                                            item.id
+                                                                        )
+                                                                            ?.rewatchCount ??
+                                                                        0
+                                                                    }
+                                                                />
+                                                            </span>
                                                         ) : watchedIds.has(item.id) ? (
                                                             <small>
                                                                 {progressById.get(item.id)?.positionSeconds &&
@@ -3872,6 +4077,7 @@ function LearnPlayer({
     calculatorOpen,
     onCalculatorClose,
     onProgress,
+    onRewatch,
 }: {
     catalogs: Catalogs;
     boot: Bootstrap;
@@ -3886,6 +4092,7 @@ function LearnPlayer({
         completed: boolean,
         watched: boolean
     ) => void;
+    onRewatch: (videoId: string) => void;
 }) {
     const { autoNext, setAutoNext, autoPlay, setAutoPlay } = useAutoSettings();
     const subject = getParam("subject", "quant") as Subject;
@@ -3893,6 +4100,7 @@ function LearnPlayer({
     const [ended, setEnded] = useState(false);
     const [countdown, setCountdown] = useState<number | null>(null);
     const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const noteEditorActiveRef = useRef(false);
     const course = catalogs.videos[subject];
     const flat = course.categories.flatMap((c) => c.videos);
     const video =
@@ -3902,6 +4110,7 @@ function LearnPlayer({
     const lastSaved = useRef(0);
     const completedRef = useRef(false);
     const watchedRef = useRef(false);
+    const rewatchRecordedRef = useRef(false);
     const saveProgressRef = useRef<() => void>(() => {});
     const stored = boot.videos.find((item) => item.videoId === video?.id);
     const videoIndex = flat.findIndex((item) => item.id === video?.id);
@@ -3921,11 +4130,22 @@ function LearnPlayer({
         lastSaved.current = stored?.positionSeconds ?? 0;
         completedRef.current = Boolean(stored?.completed);
         watchedRef.current = Boolean(stored?.watched || stored?.completed);
+        rewatchRecordedRef.current = false;
         setPlaybackRate(1);
         setEnded(false);
         clearCountdown();
     }, [video?.id, clearCountdown]);
     useEffect(() => () => clearCountdown(), [clearCountdown]);
+    useEffect(() => {
+        const setNoteEditorState = (event: Event) => {
+            noteEditorActiveRef.current = Boolean(
+                (event as CustomEvent<{ active?: boolean }>).detail?.active
+            );
+        };
+        window.addEventListener("gre-note-editor-state", setNoteEditorState);
+        return () =>
+            window.removeEventListener("gre-note-editor-state", setNoteEditorState);
+    }, []);
     const save = (
         completed = completedRef.current,
         element = videoRef.current,
@@ -3993,6 +4213,20 @@ function LearnPlayer({
                 ? element.currentTime / duration
                 : 0;
         const completesNow = progress >= 0.9;
+        if (completesNow) watchedRef.current = true;
+        if (
+            completesNow &&
+            stored?.completed &&
+            !rewatchRecordedRef.current
+        ) {
+            rewatchRecordedRef.current = true;
+            mutate(
+                `/api/me/videos/${encodeURIComponent(video.id)}/rewatches`,
+                "POST",
+                {}
+            );
+            onRewatch(video.id);
+        }
         save(completesNow, element);
     };
     const resume = (element: HTMLVideoElement) => {
@@ -4016,6 +4250,7 @@ function LearnPlayer({
         let remaining = 5;
         setCountdown(remaining);
         countdownRef.current = setInterval(() => {
+            if (noteEditorActiveRef.current) return;
             remaining--;
             if (remaining <= 0) {
                 clearCountdown();
@@ -4061,6 +4296,10 @@ function LearnPlayer({
                         <p>
                             <MathText value={activeCategory?.title ?? ""} /> ·
                             Lesson {videoIndex + 1} of {flat.length}
+                            {(stored?.rewatchCount ?? 0) > 0 &&
+                                ` · Watched ${stored?.rewatchCount} ${
+                                    stored?.rewatchCount === 1 ? "time" : "times"
+                                }`}
                         </p>
                     </div>
                     <AutoToggles
@@ -4111,7 +4350,6 @@ function LearnPlayer({
                     }}
                     onLoadedMetadata={resume}
                     onPlay={(element) => {
-                        watchedRef.current = true;
                         save(false, element, true);
                     }}
                     onTimeUpdate={trackPlayback}
@@ -5599,7 +5837,7 @@ function SolutionPlayer({ src }: { src: string }) {
                 preload: "metadata",
                 playsinline: true,
                 aspectRatio: "16:9",
-                playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2],
+                playbackRates: [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4],
             });
             player.ready(() => {
                 const media = player.el().querySelector("video");

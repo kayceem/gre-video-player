@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { QuestionCatalogSchema, VideoCatalogEnvelopeSchema, type Answer, type Question, type Subject, type VideoCatalog } from "@gre/contracts";
 
@@ -50,6 +50,27 @@ function extractQuestionImage(rawBody: unknown, imageDir: string): { imageName: 
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap(name => { const full = join(dir, name); return statSync(full).isDirectory() ? walk(full) : [full]; });
+}
+
+/**
+ * Some source downloads are named like "Lesson title mp4.mp4". Normalize the
+ * redundant terminal marker before indexing, without ever overwriting a file.
+ */
+function normalizeRedundantMp4Names() {
+  const renamed: string[] = [];
+  for (const subjectRoot of [join(root, "GRE Quant"), join(root, "GRE Verbal")]) {
+    if (!existsSync(subjectRoot)) continue;
+    for (const file of walk(subjectRoot)) {
+      const filename = file.slice(file.lastIndexOf("/") + 1);
+      if (!/\s+mp4\.mp4$/i.test(filename)) continue;
+      const target = join(dirname(file), filename.replace(/\s+mp4\.mp4$/i, ".mp4"));
+      if (existsSync(target))
+        throw new Error(`Cannot normalize media filename because the target already exists: ${relative(root, target)}`);
+      renameSync(file, target);
+      renamed.push(`${relative(root, file)} → ${relative(root, target)}`);
+    }
+  }
+  if (renamed.length) console.log(`Normalized ${renamed.length} redundant MP4 filename${renamed.length === 1 ? "" : "s"}:\n${renamed.join("\n")}`);
 }
 
 function makeMediaIndex(subject: Subject) {
@@ -154,6 +175,7 @@ function buildVideos(subject: Subject): { catalog: VideoCatalog; media: Record<s
 
 function writeGzip(name: string, value: unknown) { writeFileSync(join(output, name), gzipSync(JSON.stringify(value))); }
 mkdirSync(output, { recursive: true });
+normalizeRedundantMp4Names();
 const media: Record<string, string> = {};
 for (const subject of ["quant", "verbal"] as const) {
   const questions = buildQuestions(subject); const questionEnvelope = { schemaVersion: 1 as const, contentVersion: hash(questions), generatedAt: new Date().toISOString(), subject, data: questions };

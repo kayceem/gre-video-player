@@ -36,7 +36,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), expires_at TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS video_progress (user_id TEXT NOT NULL, video_id TEXT NOT NULL, position_seconds REAL NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,video_id));
+CREATE TABLE IF NOT EXISTS video_progress (user_id TEXT NOT NULL, video_id TEXT NOT NULL, position_seconds REAL NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0, rewatch_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,video_id));
 CREATE TABLE IF NOT EXISTS memorize_progress (user_id TEXT NOT NULL, source TEXT NOT NULL, group_slug TEXT NOT NULL, item_slug TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('G','R')), updated_at TEXT NOT NULL, PRIMARY KEY(user_id,source,group_slug,item_slug));
 CREATE TABLE IF NOT EXISTS question_attempts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, question_id TEXT NOT NULL, selected_choice_ids TEXT NOT NULL, correct INTEGER NOT NULL, score REAL NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, submitted_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS question_state (user_id TEXT NOT NULL, question_id TEXT NOT NULL, bookmarked INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,question_id));
@@ -48,6 +48,13 @@ CREATE INDEX IF NOT EXISTS question_attempts_user_idx ON question_attempts (user
 CREATE INDEX IF NOT EXISTS notes_user_updated_idx ON notes (user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS notes_user_source_idx ON notes (user_id, source_type, source_id);
 `);
+try {
+    db.prepare(
+        "ALTER TABLE video_progress ADD COLUMN rewatch_count INTEGER NOT NULL DEFAULT 0"
+    ).run();
+} catch {
+    // Existing databases already have this additive column.
+}
 
 const app = express();
 app.disable("x-powered-by");
@@ -409,7 +416,7 @@ function sameAnswer(question: Question, received: any) {
 app.get("/api/me/bootstrap", requireUser, (req, res) => {
     const videos = db
         .prepare(
-            "SELECT video_id AS videoId, position_seconds AS positionSeconds, watched, completed, updated_at AS updatedAt FROM video_progress WHERE user_id = ?"
+            "SELECT video_id AS videoId, position_seconds AS positionSeconds, watched, completed, rewatch_count AS rewatchCount, updated_at AS updatedAt FROM video_progress WHERE user_id = ?"
         )
         .all(req.user!.id);
     // Return one durable status row per question. Limiting raw attempts caused older
@@ -508,6 +515,26 @@ app.put("/api/me/videos/:videoId/progress", requireUser, (req, res, next) => {
             now()
         );
         res.json({ ok: true });
+    } catch (error) {
+        next(error);
+    }
+});
+app.post("/api/me/videos/:videoId/rewatches", requireUser, (req, res, next) => {
+    try {
+        const videoId = z.string().min(1).parse(req.params.videoId);
+        if (!videoExists(videoId))
+            return res.status(404).json({ error: "Video is not available." });
+        const result = db
+            .prepare(
+                "UPDATE video_progress SET rewatch_count = rewatch_count + 1, updated_at = ? WHERE user_id = ? AND video_id = ? AND completed = 1"
+            )
+            .run(now(), req.user!.id, videoId);
+        if (!result.changes)
+            return res.status(409).json({ error: "Complete the lesson before recording a rewatch." });
+        const row = db
+            .prepare("SELECT rewatch_count AS rewatchCount FROM video_progress WHERE user_id = ? AND video_id = ?")
+            .get(req.user!.id, videoId) as { rewatchCount: number };
+        res.json(row);
     } catch (error) {
         next(error);
     }
