@@ -3348,6 +3348,15 @@ body {
     color: var(--text-secondary);
     font-size: 14px;
 }
+.lesson-offline-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    color: var(--success);
+    font-weight: 750;
+    white-space: nowrap;
+}
 .lesson-player-page {
     max-width: 1080px;
     margin-inline: auto;
@@ -3434,6 +3443,12 @@ body {
 .auto-toggle-btn:hover:not(.active) {
     background: var(--surface-hover);
     color: var(--text-strong);
+}
+.auto-toggle-lock {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
 }
 
 .question-status-tag {
@@ -3566,6 +3581,490 @@ body {
 .end-cancel-countdown:hover {
     background: rgba(255, 255, 255, 0.2);
     color: #fff;
+}
+.autoplay-blocked {
+    position: absolute;
+    z-index: 12;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 14px;
+    padding: 24px;
+    color: #fff;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.58);
+}
+.autoplay-blocked p {
+    max-width: 300px;
+    margin: 0;
+    font-weight: 650;
+    line-height: 1.4;
+}
+.autoplay-blocked button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: 9px;
+    padding: 11px 16px;
+    color: #fff;
+    background: var(--accent, #3662e3);
+    font: inherit;
+    font-weight: 750;
+    cursor: pointer;
+}
+.autoplay-blocked button:hover {
+    background: var(--accent-hover, #2a4fd0);
+}
+@media (max-width: 760px) {
+    .auto-toggles:has(.auto-toggle-lock) {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    .auto-toggle-lock {
+        display: inline-flex;
+    }
+    /* Keep the video chrome intentional while all surrounding lesson input is locked. */
+    body.lesson-input-locked .lesson-page-header,
+    body.lesson-input-locked .lesson-navigation,
+    body.lesson-input-locked .lesson-detail,
+    body.lesson-input-locked .site-nav,
+    body.lesson-input-locked .tabbar {
+        pointer-events: none;
+        user-select: none;
+    }
+    body.lesson-input-locked .auto-toggle-lock,
+    body.lesson-input-locked .lesson-video-center-controls,
+    body.lesson-input-locked .lesson-video-fullscreen,
+    body.lesson-input-locked .autoplay-blocked,
+    body.lesson-input-locked .lesson-end-screen .end-screen-content {
+        pointer-events: auto;
+    }
+    .lesson-player.is-input-locked > div:first-child {
+        pointer-events: none;
+    }
+}
+
+/* Offline downloads */
+.downloads-page .page-intro {
+    padding-bottom: 24px;
+}
+.downloads-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    color: var(--text-secondary);
+    margin-bottom: 18px;
+}
+.downloads-summary strong {
+    color: var(--text-strong);
+    font-size: 18px;
+}
+.downloads-tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 0 18px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-raised, var(--surface));
+}
+.downloads-tabs button {
+    flex: 1;
+    min-height: 36px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-weight: 750;
+}
+.downloads-tabs button.active {
+    background: var(--accent);
+    color: #fff;
+}
+.downloads-subjects {
+    display: flex;
+    gap: 7px;
+    margin-bottom: 16px;
+}
+.downloads-subjects button {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 15px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-weight: 750;
+}
+.downloads-subjects button.active {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+.download-tools {
+    display: grid;
+    grid-template-columns: minmax(210px, 1fr) minmax(180px, .65fr) repeat(3, auto);
+    gap: 9px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-raised, var(--surface));
+}
+.download-tools .search {
+    min-height: 40px;
+}
+.download-tools select,
+.download-tools > button,
+.download-actionbar > button,
+.saved-downloads button {
+    border: 1px solid var(--border-strong, var(--border));
+    border-radius: 8px;
+    padding: 9px 11px;
+    background: var(--surface);
+    color: var(--text-body);
+    font-weight: 700;
+}
+.download-tools select {
+    min-width: 0;
+}
+.downloads-resume,
+.downloads-message {
+    margin: 12px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+.downloads-message {
+    border-radius: 8px;
+    padding: 9px 11px;
+    background: var(--accent-soft);
+    color: var(--accent-text);
+}
+.download-actionbar {
+    position: sticky;
+    top: 12px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+}
+.download-actionbar > span {
+    margin-right: auto;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+}
+.download-actionbar .primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+.downloads-list {
+    border-bottom: 1px solid var(--border);
+}
+.download-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 63px;
+    padding: 10px 7px;
+    border-top: 1px solid var(--border-faint, var(--border));
+    cursor: pointer;
+}
+.download-row:hover {
+    background: var(--surface-hover);
+}
+.download-row input {
+    width: 17px;
+    height: 17px;
+    accent-color: var(--accent);
+}
+.download-row-main {
+    min-width: 0;
+    color: var(--text-strong);
+    font-weight: 700;
+}
+.download-row-main small {
+    display: block;
+    overflow: hidden;
+    margin-top: 2px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.download-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.download-state .spinner {
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+}
+.download-state.saved {
+    color: var(--success);
+    font-weight: 750;
+}
+.downloads-empty {
+    padding: 35px 8px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+.saved-downloads {
+    margin-top: 28px;
+}
+.saved-downloads h2 {
+    margin: 0 0 8px;
+    color: var(--text-strong);
+    font-size: 18px;
+}
+.saved-downloads-head {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 10px;
+}
+.saved-downloads-head h2 {
+    margin-bottom: 2px;
+}
+.saved-downloads-head p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+.saved-downloads-head label,
+.saved-download-actions label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+}
+.saved-downloads-head select {
+    border: 1px solid var(--border-strong, var(--border));
+    border-radius: 7px;
+    padding: 7px;
+    background: var(--surface);
+    color: var(--text-body);
+    font: inherit;
+}
+.saved-download-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 7px;
+    border-top: 1px solid var(--border-faint, var(--border));
+}
+.saved-download-actions button {
+    padding: 7px 9px;
+    font-size: 12px;
+}
+.saved-download-actions .remove-all {
+    margin-left: auto;
+    color: var(--danger, #b42318);
+}
+.saved-downloads > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 7px;
+    border-top: 1px solid var(--border-faint, var(--border));
+    color: var(--text-body);
+}
+.saved-downloads > div > input {
+    width: 17px;
+    height: 17px;
+    accent-color: var(--accent);
+}
+.saved-downloads > div > span {
+    min-width: 0;
+    margin-right: auto;
+}
+.saved-downloads > div small {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+}
+.saved-downloads button {
+    color: var(--danger, #b42318);
+}
+.download-progress-list {
+    border-top: 1px solid var(--border);
+}
+.download-progress-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(120px, .8fr) auto auto;
+    align-items: center;
+    gap: 14px;
+    padding: 15px 7px;
+    border-bottom: 1px solid var(--border-faint, var(--border));
+}
+.download-progress-row strong,
+.download-progress-row small {
+    display: block;
+}
+.download-progress-row strong {
+    color: var(--text-strong);
+    font-size: 14px;
+}
+.download-progress-row small {
+    margin-top: 3px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+}
+.download-progress-row > span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.download-progress-meter {
+    height: 7px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--border);
+}
+.download-progress-meter i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    transition: width .18s linear;
+}
+.download-job-actions {
+    display: flex;
+    gap: 6px;
+}
+.download-job-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--border-strong, var(--border));
+    border-radius: 7px;
+    padding: 7px 9px;
+    background: var(--surface);
+    color: var(--text-body);
+    font-size: 12px;
+    font-weight: 700;
+}
+.download-limit-backdrop {
+    position: fixed;
+    z-index: 200;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: rgba(10, 18, 35, .5);
+}
+.download-limit-dialog {
+    width: min(420px, 100%);
+    padding: 22px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow-dialog);
+}
+.download-limit-dialog h2 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 20px;
+}
+.download-limit-dialog p {
+    margin: 10px 0 20px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.download-limit-dialog > div {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.download-limit-dialog button {
+    border: 1px solid var(--border-strong, var(--border));
+    border-radius: 8px;
+    padding: 9px 11px;
+    background: var(--surface);
+    color: var(--text-body);
+    font-weight: 700;
+}
+.download-limit-dialog .primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+@media (max-width: 760px) {
+    .download-tools {
+        grid-template-columns: 1fr 1fr;
+    }
+    .download-tools .search,
+    .download-tools select {
+        grid-column: 1 / -1;
+    }
+    .download-actionbar {
+        top: 0;
+        flex-wrap: wrap;
+    }
+    .download-actionbar > span {
+        width: 100%;
+    }
+    .download-actionbar > button {
+        flex: 1;
+    }
+    .download-row {
+        gap: 9px;
+    }
+    .downloads-tabs button {
+        min-width: 0;
+        padding-inline: 6px;
+        font-size: 12px;
+    }
+    .download-progress-row {
+        grid-template-columns: 1fr auto;
+        gap: 9px;
+    }
+    .download-progress-meter {
+        grid-column: 1 / -1;
+        grid-row: 2;
+    }
+    .download-progress-row > span {
+        grid-column: 1;
+        grid-row: 3;
+    }
+    .download-job-actions {
+        grid-column: 2;
+        grid-row: 3;
+    }
+    .download-limit-dialog > div {
+        flex-direction: column-reverse;
+    }
+    .download-limit-dialog button {
+        width: 100%;
+    }
+    .saved-downloads-head {
+        align-items: start;
+        flex-direction: column;
+    }
+    .saved-download-actions {
+        flex-wrap: wrap;
+    }
+    .saved-download-actions .remove-all {
+        margin-left: 0;
+    }
 }
 .end-screen-hint {
     margin: 18px 0 0;

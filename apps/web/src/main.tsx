@@ -21,6 +21,7 @@ import {
     Gauge,
     House,
     LogOut,
+    Lock,
     Maximize,
     Minimize,
     Monitor,
@@ -43,6 +44,7 @@ import {
     Target,
     Trash2,
     Undo2,
+    Unlock,
     WifiOff,
     X,
 } from "lucide-react";
@@ -158,15 +160,100 @@ const readTheme = (): Theme => {
 };
 document.documentElement.setAttribute("data-theme", readTheme());
 
+const mediaDownloadCache = "gre-desk-media-v1";
+type OfflineDownload = {
+    videoId: string;
+    mediaId: string;
+    downloadedAt: string;
+    bytes: number;
+};
 function openStore(name: string) {
     return new Promise<IDBDatabase>((resolve, reject) => {
-        const r = indexedDB.open("gre-study-desk", 1);
+        const r = indexedDB.open("gre-study-desk", 2);
         r.onupgradeneeded = () => {
-            r.result.createObjectStore("catalogs");
-            r.result.createObjectStore("mutations", { keyPath: "id" });
+            if (!r.result.objectStoreNames.contains("catalogs"))
+                r.result.createObjectStore("catalogs");
+            if (!r.result.objectStoreNames.contains("mutations"))
+                r.result.createObjectStore("mutations", { keyPath: "id" });
+            if (!r.result.objectStoreNames.contains("downloads"))
+                r.result.createObjectStore("downloads", { keyPath: "videoId" });
         };
         r.onsuccess = () => resolve(r.result);
         r.onerror = () => reject(r.error);
+    });
+}
+async function listOfflineDownloads() {
+    const db = await openStore("downloads");
+    return new Promise<OfflineDownload[]>((resolve, reject) => {
+        const r = db.transaction("downloads").objectStore("downloads").getAll();
+        r.onsuccess = () => resolve(r.result as OfflineDownload[]);
+        r.onerror = () => reject(r.error);
+    });
+}
+async function saveOfflineDownload(download: OfflineDownload) {
+    const db = await openStore("downloads");
+    await new Promise<void>((resolve, reject) => {
+        const r = db.transaction("downloads", "readwrite").objectStore("downloads").put(download);
+        r.onsuccess = () => resolve();
+        r.onerror = () => reject(r.error);
+    });
+    window.dispatchEvent(new Event("gre-downloads-changed"));
+}
+async function removeOfflineDownload(video: OfflineDownload) {
+    const db = await openStore("downloads");
+    await new Promise<void>((resolve, reject) => {
+        const r = db.transaction("downloads", "readwrite").objectStore("downloads").delete(video.videoId);
+        r.onsuccess = () => resolve();
+        r.onerror = () => reject(r.error);
+    });
+    await caches.open(mediaDownloadCache).then((cache) =>
+        cache.delete(`/api/media/course/${encodeURIComponent(video.mediaId)}`)
+    );
+    window.dispatchEvent(new Event("gre-downloads-changed"));
+}
+async function downloadOfflineVideo(
+    video: { id: string; mediaId: string },
+    options: {
+        signal: AbortSignal;
+        onProgress: (loaded: number, total: number) => void;
+    }
+) {
+    const url = `/api/media/course/${encodeURIComponent(video.mediaId)}`;
+    const response = await fetch(url, { cache: "no-store", signal: options.signal });
+    if (!response.ok || response.status === 206)
+        throw new Error("The lesson could not be downloaded.");
+    const bytes = Number(response.headers.get("content-length") ?? 0);
+    options.onProgress(0, bytes);
+    if (!response.body) throw new Error("This browser cannot download this lesson.");
+    const [cacheStream, progressStream] = response.body.tee();
+    const cachedResponse = new Response(cacheStream, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+    });
+    const cacheWrite = caches.open(mediaDownloadCache).then((cache) =>
+        cache.put(url, cachedResponse)
+    );
+    const reader = progressStream.getReader();
+    let loaded = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            loaded += value.byteLength;
+            options.onProgress(loaded, bytes);
+        }
+        await cacheWrite;
+    } catch (error) {
+        await cacheWrite.catch(() => {});
+        await caches.open(mediaDownloadCache).then((cache) => cache.delete(url));
+        throw error;
+    }
+    await saveOfflineDownload({
+        videoId: video.id,
+        mediaId: video.mediaId,
+        downloadedAt: new Date().toISOString(),
+        bytes: bytes || loaded,
     });
 }
 async function storeGet<T>(key: string): Promise<T | undefined> {
@@ -1792,6 +1879,290 @@ function NotesLibrary({ user, context }: { user: { id: string } | null; context:
     };
     return <section className="notes-library"><div className="page-intro"><span className="eyebrow">Your study system</span><h1>Notes</h1><p>Everything you capture is labelled by subject and linked back to its lesson or question.</p></div>{!user ? <section className="empty"><NotebookPen size={30}/><h2>Sign in to start taking notes</h2><p>Your notes are private and sync across devices.</p></section> : creating || editing ? <section className="notes-library-editor"><h2>{editing ? "Edit note" : "New note"}</h2><NoteEditor note={editing} context={context} onSave={save} onCancel={() => {setCreating(false); setEditing(undefined);}}/></section> : <><div className="notes-library-tools"><label><Search size={17}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search notes, tags, lessons…" /></label><select value={subject} onChange={(e) => setSubject(e.target.value as "all" | Subject)}><option value="all">All subjects</option><option value="quant">Quant</option><option value="verbal">Verbal</option></select><button className="export-notes" onClick={exportNotes} disabled={!filtered.length}><Download size={16}/> Export</button><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> Add note</button></div><p className="notes-result-count">{filtered.length} {filtered.length === 1 ? "note" : "notes"}</p><div className="notes-library-grid">{filtered.map((note) => <NoteCard key={note.id} note={note} onOpen={setViewing} onDelete={(item) => setConfirmation({action:"delete",note:item})} onEdit={(item) => setConfirmation({action:"edit",note:item})}/>)}</div></>}{viewing && <div className="note-popup-backdrop" onMouseDown={() => setViewing(null)}><article className="note-view-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><button className="icon-close" onClick={() => setViewing(null)}><X size={18}/></button><NoteCard note={viewing} onEdit={(item) => {setViewing(null); setConfirmation({action:"edit",note:item});}} onDelete={(item) => {setViewing(null); setConfirmation({action:"delete",note:item});}}/></article></div>}{confirmation && <NoteConfirm {...confirmation} onCancel={() => setConfirmation(null)} onConfirm={() => { const item=confirmation.note; if (confirmation.action === "delete") remove(item); else {setEditing(item); setCreating(false);} setConfirmation(null); }}/>}</section>;
 }
+type DownloadJob = {
+    video: { id: string; mediaId: string; title: string; categoryTitle: string };
+    status: "downloading" | "paused" | "failed";
+    loaded: number;
+    total: number;
+    error?: string;
+};
+function Downloads({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) {
+    const [subject, setSubject] = useState<Subject>("quant");
+    const [tab, setTab] = useState<"browse" | "progress" | "downloaded">("browse");
+    const [query, setQuery] = useState("");
+    const [categoryId, setCategoryId] = useState("all");
+    const [selected, setSelected] = useState<Set<string>>(() => new Set());
+    const [downloads, setDownloads] = useState<OfflineDownload[]>([]);
+    const [downloading, setDownloading] = useState<Set<string>>(() => new Set());
+    const [message, setMessage] = useState<string | null>(null);
+    const [jobs, setJobs] = useState<Record<string, DownloadJob>>({});
+    const [limitRequest, setLimitRequest] = useState<{ ids: string[]; needed: number } | null>(null);
+    const [downloadedSelected, setDownloadedSelected] = useState<Set<string>>(() => new Set());
+    const [downloadSort, setDownloadSort] = useState<"newest" | "oldest">("newest");
+    const controllers = useRef(new Map<string, AbortController>());
+    const course = catalogs.videos[subject];
+    const lessons = useMemo(
+        () => course.categories.flatMap((category) =>
+            category.videos.map((video) => ({ ...video, categoryTitle: category.title }))
+        ),
+        [course]
+    );
+    const downloadedIds = useMemo(
+        () => new Set(downloads.map((download) => download.videoId)),
+        [downloads]
+    );
+    const filtered = lessons.filter((video) =>
+        (categoryId === "all" || video.categoryId === categoryId) &&
+        `${video.title} ${video.categoryTitle}`.toLowerCase().includes(query.trim().toLowerCase())
+    );
+    const slots = Math.max(0, 30 - downloads.length);
+    const storageUsed = downloads.reduce((total, download) => total + download.bytes, 0);
+    const sortedDownloads = [...downloads].sort((a, b) =>
+        downloadSort === "newest"
+            ? b.downloadedAt.localeCompare(a.downloadedAt)
+            : a.downloadedAt.localeCompare(b.downloadedAt)
+    );
+    const resume = getResumeVideo(
+        lessons,
+        boot.videos.filter((video) => video.videoId.startsWith(`${subject}:`))
+    );
+    useEffect(() => {
+        listOfflineDownloads().then(setDownloads).catch(() =>
+            setMessage("Downloads could not be read from this device.")
+        );
+    }, []);
+    useEffect(() => {
+        setQuery("");
+        setCategoryId("all");
+        setSelected(new Set());
+    }, [subject]);
+    useEffect(() => () => controllers.current.forEach((controller) => controller.abort()), []);
+    const toggle = (id: string) => {
+        if (downloadedIds.has(id)) return;
+        setSelected((current) => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else if (next.size < 30) next.add(id);
+            else setMessage("Choose up to 30 lessons at a time.");
+            return next;
+        });
+    };
+    const startDownload = async (video: DownloadJob["video"]) => {
+        const controller = new AbortController();
+        controllers.current.set(video.id, controller);
+        setDownloading((current) => new Set(current).add(video.id));
+        setJobs((current) => ({
+            ...current,
+            [video.id]: { video, status: "downloading", loaded: 0, total: 0 },
+        }));
+        try {
+            await downloadOfflineVideo(video, {
+                signal: controller.signal,
+                onProgress: (loaded, total) => setJobs((current) => ({
+                    ...current,
+                    [video.id]: { video, status: "downloading", loaded, total },
+                })),
+            });
+            setDownloads(await listOfflineDownloads());
+            setJobs((current) => {
+                const next = { ...current };
+                delete next[video.id];
+                return next;
+            });
+            setSelected((current) => {
+                const next = new Set(current);
+                next.delete(video.id);
+                return next;
+            });
+            return true;
+        } catch (error) {
+            if (!controller.signal.aborted) {
+                setJobs((current) => ({
+                    ...current,
+                    [video.id]: {
+                        video,
+                        status: "failed",
+                        loaded: current[video.id]?.loaded ?? 0,
+                        total: current[video.id]?.total ?? 0,
+                        error: "Download failed",
+                    },
+                }));
+            }
+            return false;
+        } finally {
+            controllers.current.delete(video.id);
+            setDownloading((current) => {
+                const next = new Set(current);
+                next.delete(video.id);
+                return next;
+            });
+        }
+    };
+    const startQueue = async (queue: DownloadJob["video"][]) => {
+        setMessage(null);
+        try {
+            await navigator.storage?.persist?.();
+            for (const video of queue) {
+                const completed = await startDownload(video);
+                if (!completed) {
+                    setMessage("Download queue stopped. Resume or restart it from Progress.");
+                    return;
+                }
+            }
+            setMessage("Download queue finished.");
+        } catch {
+            setMessage("A download failed. Check your connection and available device storage, then try again.");
+        }
+    };
+    const runDownloads = (ids: string[]) => {
+        const queue = lessons
+            .filter((video) => ids.includes(video.id) && !downloadedIds.has(video.id))
+            .slice(0, 30);
+        if (!queue.length) return;
+        const needed = Math.max(0, queue.length - slots);
+        if (needed) {
+            setLimitRequest({ ids: queue.map((video) => video.id), needed });
+            return;
+        }
+        void startQueue(queue);
+    };
+    const downloadSelected = () => runDownloads([...selected]);
+    const remove = async (download: OfflineDownload) => {
+        await removeOfflineDownload(download);
+        setDownloads(await listOfflineDownloads());
+        setDownloadedSelected((current) => {
+            const next = new Set(current);
+            next.delete(download.videoId);
+            return next;
+        });
+    };
+    const removeDownloaded = async (ids: Set<string>) => {
+        const targets = downloads.filter((download) => ids.has(download.videoId));
+        if (!targets.length) return;
+        await Promise.all(targets.map(removeOfflineDownload));
+        setDownloads(await listOfflineDownloads());
+        setDownloadedSelected(new Set());
+    };
+    const formatBytes = (bytes: number) =>
+        bytes >= 1024 * 1024 * 1024
+            ? `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+            : `${Math.max(0.1, bytes / (1024 * 1024)).toFixed(1)} MB`;
+    const pause = (id: string) => {
+        controllers.current.get(id)?.abort();
+        setJobs((current) => current[id] ? {
+            ...current,
+            [id]: { ...current[id], status: "paused" },
+        } : current);
+    };
+    const cancel = (id: string) => {
+        controllers.current.get(id)?.abort();
+        setJobs((current) => {
+            const next = { ...current };
+            delete next[id];
+            return next;
+        });
+    };
+    const restart = (job: DownloadJob) => startDownload(job.video);
+    const replaceOldest = async () => {
+        if (!limitRequest) return;
+        const oldest = [...downloads]
+            .sort((a, b) => a.downloadedAt.localeCompare(b.downloadedAt))
+            .slice(0, limitRequest.needed);
+        try {
+            await Promise.all(oldest.map(removeOfflineDownload));
+            setDownloads(await listOfflineDownloads());
+            const requested = limitRequest.ids;
+            setLimitRequest(null);
+            void startQueue(lessons.filter((video) => requested.includes(video.id)));
+        } catch {
+            setMessage("Unable to remove the older downloads. Please try again.");
+            setLimitRequest(null);
+        }
+    };
+    const nextIds = (count: number) => {
+        const start = Math.max(0, lessons.findIndex((video) => video.id === resume?.id));
+        return lessons.slice(start, start + count).map((video) => video.id);
+    };
+    return (
+        <section className="downloads-page">
+            <div className="page-intro">
+                <span className="eyebrow">Offline study</span>
+                <h1>Downloads</h1>
+                <p>Save up to 30 complete lessons on this device for reliable offline playback.</p>
+            </div>
+            <div className="downloads-summary">
+                <strong>{downloads.length} / 30 saved</strong>
+                <span>{slots} download {slots === 1 ? "space" : "spaces"} remaining</span>
+            </div>
+            <div className="downloads-tabs" role="tablist" aria-label="Download manager">
+                <button role="tab" aria-selected={tab === "browse"} className={tab === "browse" ? "active" : ""} onClick={() => setTab("browse")}>Download</button>
+                <button role="tab" aria-selected={tab === "progress"} className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>Progress {Object.keys(jobs).length ? `(${Object.keys(jobs).length})` : ""}</button>
+                <button role="tab" aria-selected={tab === "downloaded"} className={tab === "downloaded" ? "active" : ""} onClick={() => setTab("downloaded")}>Downloaded ({downloads.length})</button>
+            </div>
+            {tab === "browse" && <>
+            <div className="downloads-subjects" role="tablist" aria-label="Course subject">
+                {(["quant", "verbal"] as Subject[]).map((item) => (
+                    <button key={item} role="tab" aria-selected={subject === item} className={subject === item ? "active" : ""} onClick={() => setSubject(item)}>
+                        {item === "quant" ? "Quant" : "Verbal"}
+                    </button>
+                ))}
+            </div>
+            <section className="download-tools" aria-label="Find lessons to download">
+                <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search lessons" aria-label="Search downloadable lessons" /></label>
+                <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} aria-label="Filter by chapter">
+                    <option value="all">All chapters</option>
+                    {course.categories.map((category) => <option key={category.id} value={category.id}>{category.title}</option>)}
+                </select>
+                <button onClick={() => runDownloads(lessons.filter((video) => video.categoryId === categoryId).map((video) => video.id))} disabled={categoryId === "all" || downloading.size > 0}>Download chapter</button>
+                <button onClick={() => runDownloads(nextIds(10))} disabled={!resume || downloading.size > 0}>Next 10</button>
+                <button onClick={() => runDownloads(nextIds(20))} disabled={!resume || downloading.size > 0}>Next 20</button>
+            </section>
+            {resume && <p className="downloads-resume">Next lessons start from <strong><MathText value={resume.title} /></strong>, your current {subject === "quant" ? "Quant" : "Verbal"} lesson on Home.</p>}
+            <div className="download-actionbar">
+                <span>{selected.size} selected</span>
+                <button onClick={() => setSelected(new Set())} disabled={!selected.size || downloading.size > 0}>Clear selection</button>
+                <button className="primary" onClick={downloadSelected} disabled={!selected.size || downloading.size > 0}>
+                    <Download size={17} /> {downloading.size ? "Downloading…" : `Download ${selected.size || ""} selected`}
+                </button>
+            </div>
+            {message && <p className="downloads-message" role="status">{message}</p>}
+            <div className="downloads-list">
+                {filtered.map((video) => {
+                    const downloaded = downloadedIds.has(video.id);
+                    const active = downloading.has(video.id);
+                    return <label className={`download-row ${downloaded ? "is-downloaded" : ""}`} key={video.id}>
+                        <input type="checkbox" checked={downloaded || selected.has(video.id)} disabled={downloaded || active} onChange={() => toggle(video.id)} />
+                        <span className="download-row-main"><MathText value={video.title} /><small>{video.categoryTitle}</small></span>
+                        {active ? <span className="download-state"><span className="spinner" /> Downloading</span> : downloaded ? <span className="download-state saved"><Check size={16} /> Saved</span> : <span className="download-state">Available</span>}
+                    </label>;
+                })}
+                {!filtered.length && <p className="downloads-empty">No lessons match those filters.</p>}
+            </div>
+            </>}
+            {tab === "progress" && <section className="download-progress-list">
+                {Object.values(jobs).map((job) => <div className="download-progress-row" key={job.video.id}>
+                    <div><strong><MathText value={job.video.title} /></strong><small>{job.video.categoryTitle}</small></div>
+                    <div className="download-progress-meter"><i style={{ width: `${job.total ? Math.min(100, (job.loaded / job.total) * 100) : 0}%` }} /></div>
+                    <span>{job.status === "downloading" && job.total ? `${Math.round((job.loaded / job.total) * 100)}%` : job.status === "downloading" ? "Starting…" : job.status === "paused" ? "Paused" : "Failed"}</span>
+                    <div className="download-job-actions">
+                        {job.status === "downloading" ? <button onClick={() => pause(job.video.id)}><Pause size={15} /> Pause</button> : <button onClick={() => restart(job)}><RefreshCw size={15} /> Restart</button>}
+                        <button onClick={() => cancel(job.video.id)}><X size={15} /> Cancel</button>
+                    </div>
+                </div>)}
+                {!Object.keys(jobs).length && <p className="downloads-empty">No downloads are in progress.</p>}
+            </section>}
+            {tab === "downloaded" && <section className="saved-downloads"><div className="saved-downloads-head"><div><h2>Saved on this device</h2><p>{downloads.length} lessons · {formatBytes(storageUsed)} used</p></div><label>Sort <select value={downloadSort} onChange={(event) => setDownloadSort(event.target.value as "newest" | "oldest")}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label></div>{downloads.length > 0 && <div className="saved-download-actions"><label><input type="checkbox" checked={downloadedSelected.size === downloads.length} onChange={(event) => setDownloadedSelected(event.target.checked ? new Set(downloads.map((download) => download.videoId)) : new Set())} /> Select all</label><button onClick={() => removeDownloaded(downloadedSelected)} disabled={!downloadedSelected.size || downloading.size > 0}>Remove selected ({downloadedSelected.size})</button><button className="remove-all" onClick={() => { if (confirm(`Remove all ${downloads.length} downloaded lessons from this device?`)) void removeDownloaded(new Set(downloads.map((download) => download.videoId))); }} disabled={downloading.size > 0}>Remove all</button></div>}{sortedDownloads.map((download) => {
+                const video = Object.values(catalogs.videos).flatMap((catalog) => catalog.categories.flatMap((category) => category.videos)).find((item) => item.id === download.videoId);
+                return <div key={download.videoId}><input type="checkbox" checked={downloadedSelected.has(download.videoId)} onChange={() => setDownloadedSelected((current) => { const next = new Set(current); if (next.has(download.videoId)) next.delete(download.videoId); else next.add(download.videoId); return next; })} /><span><MathText value={video?.title ?? download.videoId} /><small>{new Date(download.downloadedAt).toLocaleDateString()} · {formatBytes(download.bytes)}</small></span><button onClick={() => remove(download)} disabled={downloading.size > 0}>Remove</button></div>;
+            })}{!downloads.length && <p className="downloads-empty">No lessons have been downloaded yet.</p>}</section>}
+            {limitRequest && <div className="download-limit-backdrop" role="presentation"><section className="download-limit-dialog" role="dialog" aria-modal="true" aria-labelledby="download-limit-title">
+                <h2 id="download-limit-title">Download limit reached</h2>
+                <p>You have {downloads.length} of 30 lessons saved. Delete the {limitRequest.needed} oldest {limitRequest.needed === 1 ? "download" : "downloads"} to make room for these new lessons?</p>
+                <div><button onClick={() => setLimitRequest(null)}>Not now</button><button className="primary" onClick={replaceOldest}>Delete oldest &amp; download</button></div>
+            </section></div>}
+        </section>
+    );
+}
 function App() {
     const [catalogs, setCatalogs] = useState<Catalogs>(initialCatalogs),
         [boot, setBoot] = useState<Bootstrap>({
@@ -2046,6 +2417,7 @@ function App() {
             notifyVideoSeek(target, amount);
         };
         const key = (event: KeyboardEvent) => {
+            if (document.body.classList.contains("lesson-input-locked")) return;
             const target = event.target as HTMLElement;
             const keyLower = event.key.toLowerCase();
             const isInteractiveTarget = target?.matches(
@@ -2483,6 +2855,8 @@ function App() {
                     />
                 ) : route === "notes" ? (
                     <NotesLibrary user={user} context={noteContext} />
+                ) : route === "downloads" ? (
+                    <Downloads catalogs={catalogs} boot={boot} />
                 ) : route === "account" ? (
                     <Account
                         user={user}
@@ -2519,6 +2893,7 @@ function Nav({
         { id: "dashboard", label: "Home", icon: House },
         { id: "learn", label: "Learn", icon: BookOpen },
         { id: "practice", label: "Practice", icon: Target },
+        { id: "downloads", label: "Downloads", icon: Download },
         { id: "notes", label: "Notes", icon: NotebookPen },
         { id: "memorize", label: "Memorize", icon: Brain },
         { id: "account", label: "Account", icon: CircleUserRound },
@@ -2536,7 +2911,7 @@ function Nav({
     const mobileLinks = links.filter((link) =>
         ["dashboard", "learn", "practice", "memorize"].includes(link.id)
     );
-    const mobileMoreActive = isActive("notes") || isActive("account");
+    const mobileMoreActive = isActive("downloads") || isActive("notes") || isActive("account");
     return (
         <>
             <header className="site-nav">
@@ -2554,7 +2929,7 @@ function Nav({
                         className="nav-links"
                         aria-label="Primary navigation"
                     >
-                        {links.slice(0, 5).map((link) => {
+                        {links.slice(0, 6).map((link) => {
                             if (link.id === "memorize") {
                                 return (
                                     <div
@@ -2714,7 +3089,7 @@ function Nav({
                         <div className="tabbar-more-menu" role="menu">
                             {links
                                 .filter((link) =>
-                                    ["notes", "account"].includes(link.id)
+                                    ["downloads", "notes", "account"].includes(link.id)
                                 )
                                 .map((link) => {
                                     const Icon = link.icon;
@@ -2917,6 +3292,8 @@ type LessonPlayerProps = {
     onSelectLesson?: (id: string) => void;
     autoNext?: boolean;
     autoPlay?: boolean;
+    inputLocked?: boolean;
+    autoPlayRequest?: number;
     countdown?: number | null;
     onCancelCountdown?: () => void;
 };
@@ -2945,6 +3322,8 @@ function LessonPlayer(props: LessonPlayerProps) {
         onSelectLesson,
         autoNext,
         autoPlay,
+        inputLocked = false,
+        autoPlayRequest = 0,
         countdown,
         onCancelCountdown,
     } = props;
@@ -2962,8 +3341,12 @@ function LessonPlayer(props: LessonPlayerProps) {
         [error, setError] = useState<string | null>(null),
         [playing, setPlaying] = useState(false),
         [isFullscreen, setIsFullscreen] = useState(false),
-        [controlsVisible, setControlsVisible] = useState(true);
+        [controlsVisible, setControlsVisible] = useState(true),
+        [autoplayBlocked, setAutoplayBlocked] = useState(false);
     const shouldAutoPlay = useRef(false);
+    const servedAutoPlayRequest = useRef(autoPlayRequest);
+    const autoPlayRef = useRef(autoPlay);
+    autoPlayRef.current = autoPlay;
     const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const showControls = useCallback(() => {
         if (scratchPadOpen) return;
@@ -2976,6 +3359,18 @@ function LessonPlayer(props: LessonPlayerProps) {
             controlsTimerRef.current = null;
         }, 2000);
     }, [scratchPadOpen]);
+    const playMedia = useCallback(
+        (media: HTMLVideoElement) => {
+            return media.play().catch(() => {
+                // iOS rejects audible playback that is not directly initiated by a tap.
+                // Keep a clear, one-tap recovery path instead of failing silently.
+                setLoading(false);
+                setBuffering(false);
+                setAutoplayBlocked(true);
+            });
+        },
+        []
+    );
     useEffect(() => {
         if (scratchPadOpen) {
             if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
@@ -3001,6 +3396,7 @@ function LessonPlayer(props: LessonPlayerProps) {
         setLoading(true);
         setBuffering(false);
         setError(null);
+        setAutoplayBlocked(false);
 
         loadVideojs()
             .then((videojs) => {
@@ -3232,9 +3628,14 @@ function LessonPlayer(props: LessonPlayerProps) {
                         videoRef.current = current;
                         prepareMediaElement(current);
                         onLoadedMetadata(current);
-                        if (autoPlay || shouldAutoPlay.current) {
+                        const requestedAutoPlay =
+                            autoPlayRef.current ||
+                            shouldAutoPlay.current ||
+                            autoPlayRequest !== servedAutoPlayRequest.current;
+                        if (requestedAutoPlay) {
                             shouldAutoPlay.current = false;
-                            current.play().catch(() => {});
+                            servedAutoPlayRequest.current = autoPlayRequest;
+                            playMedia(current);
                         }
                     }
                 });
@@ -3251,6 +3652,9 @@ function LessonPlayer(props: LessonPlayerProps) {
                 });
                 player.on("play", () => {
                     setPlaying(true);
+                    setAutoplayBlocked(false);
+                    setLoading(false);
+                    setBuffering(false);
                     setMediaSessionState("playing");
                     const current = media();
                     if (current) {
@@ -3345,7 +3749,7 @@ function LessonPlayer(props: LessonPlayerProps) {
             player?.dispose();
             playerRef.current = null;
         };
-    }, [videoId, src]);
+    }, [videoId, src, autoPlayRequest, playMedia]);
     useEffect(() => {
         if (
             playerRef.current &&
@@ -3363,7 +3767,7 @@ function LessonPlayer(props: LessonPlayerProps) {
     const togglePlay = () => {
         const media = videoRef.current;
         if (!media) return;
-        if (media.paused || media.ended) media.play().catch(() => {});
+        if (media.paused || media.ended) playMedia(media);
         else media.pause();
     };
     const seekBy = (seconds: number) => {
@@ -3524,17 +3928,18 @@ function LessonPlayer(props: LessonPlayerProps) {
                 loading ? "is-loading" : ""
             } ${buffering ? "is-buffering" : ""} ${
                 scratchPadOpen ? "is-scratchpad-open" : ""
-            }`}
+            } ${inputLocked ? "is-input-locked" : ""}
+            `}
             aria-busy={loading || buffering}
             onMouseEnter={showControls}
             onMouseMove={showControls}
             onTouchStart={showControls}
-            onTouchEnd={handleMobileVideoTap}
+            onTouchEndCapture={handleMobileVideoTap}
         >
             <div ref={hostRef} />
             <ScratchPad open={scratchPadOpen} onClose={onScratchPadClose} />
             <GreCalculator open={calculatorOpen} onClose={onCalculatorClose} />
-            {!loading && !buffering && !scratchPadOpen && (
+            {!loading && !buffering && !scratchPadOpen && !autoplayBlocked && (
                 <div
                     className={`lesson-video-overlay ${
                         controlsVisible ? "" : "controls-hidden"
@@ -3627,6 +4032,29 @@ function LessonPlayer(props: LessonPlayerProps) {
                 <span className="video-buffering" role="status" aria-label="Buffering">
                     <span className="video-buffering-spinner" />
                 </span>
+            )}
+            {autoplayBlocked && !playing && !error && (
+                <div
+                    className="autoplay-blocked"
+                    role="status"
+                    aria-live="polite"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onTouchStart={(event) => event.stopPropagation()}
+                    onTouchEnd={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                >
+                    <p>iPhone requires a tap to start this lesson with sound.</p>
+                    <button
+                        type="button"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            const media = videoRef.current;
+                            if (media) playMedia(media);
+                        }}
+                    >
+                        <Play size={20} /> Play lesson
+                    </button>
+                </div>
             )}
             {seekFeedback && (
                 <span
@@ -3740,11 +4168,15 @@ function AutoToggles({
     onAutoNextChange,
     autoPlay,
     onAutoPlayChange,
+    locked,
+    onLockedChange,
 }: {
     autoNext: boolean;
     onAutoNextChange: (v: boolean) => void;
     autoPlay: boolean;
     onAutoPlayChange: (v: boolean) => void;
+    locked?: boolean;
+    onLockedChange?: (v: boolean) => void;
 }) {
     return (
         <div className="auto-toggles" aria-label="Playback settings">
@@ -3764,6 +4196,18 @@ function AutoToggles({
             >
                 Auto-play {autoPlay ? "ON" : "OFF"}
             </button>
+            {onLockedChange && (
+                <button
+                    type="button"
+                    className={`auto-toggle-btn auto-toggle-lock ${locked ? "active" : ""}`}
+                    onClick={() => onLockedChange(!locked)}
+                    title="Lock page controls while keeping video controls available"
+                    aria-pressed={locked}
+                >
+                    {locked ? <Lock size={15} /> : <Unlock size={15} />}
+                    {locked ? "Locked" : "Lock"}
+                </button>
+            )}
         </div>
     );
 }
@@ -4099,6 +4543,9 @@ function LearnPlayer({
     const [playbackRate, setPlaybackRate] = useState(1);
     const [ended, setEnded] = useState(false);
     const [countdown, setCountdown] = useState<number | null>(null);
+    const [autoPlayRequest, setAutoPlayRequest] = useState(0);
+    const [inputLocked, setInputLocked] = useState(false);
+    const [isDownloaded, setIsDownloaded] = useState(false);
     const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const noteEditorActiveRef = useRef(false);
     const course = catalogs.videos[subject];
@@ -4136,6 +4583,24 @@ function LearnPlayer({
         clearCountdown();
     }, [video?.id, clearCountdown]);
     useEffect(() => () => clearCountdown(), [clearCountdown]);
+    useEffect(() => {
+        let active = true;
+        const refresh = () => listOfflineDownloads()
+            .then((downloads) => {
+                if (active) setIsDownloaded(downloads.some((item) => item.videoId === video?.id));
+            })
+            .catch(() => active && setIsDownloaded(false));
+        refresh();
+        window.addEventListener("gre-downloads-changed", refresh);
+        return () => {
+            active = false;
+            window.removeEventListener("gre-downloads-changed", refresh);
+        };
+    }, [video?.id]);
+    useEffect(() => {
+        document.body.classList.toggle("lesson-input-locked", inputLocked);
+        return () => document.body.classList.remove("lesson-input-locked");
+    }, [inputLocked]);
     useEffect(() => {
         const setNoteEditorState = (event: Event) => {
             noteEditorActiveRef.current = Boolean(
@@ -4245,6 +4710,12 @@ function LearnPlayer({
         clearCountdown();
         openLesson(lessonId, subject);
     };
+    const autoAdvanceToLesson = (lessonId: string) => {
+        // This is intentionally separate from a synthetic button click. The
+        // player receives an explicit request to try playback after navigation.
+        setAutoPlayRequest((request) => request + 1);
+        selectLesson(lessonId);
+    };
     const startCountdown = (nextId: string) => {
         clearCountdown();
         let remaining = 5;
@@ -4254,11 +4725,7 @@ function LearnPlayer({
             remaining--;
             if (remaining <= 0) {
                 clearCountdown();
-                document
-                    .querySelector<HTMLButtonElement>(
-                        ".lesson-end-screen .end-next:not(:disabled)"
-                    )
-                    ?.click();
+                autoAdvanceToLesson(nextId);
             } else {
                 setCountdown(remaining);
             }
@@ -4300,6 +4767,7 @@ function LearnPlayer({
                                 ` · Watched ${stored?.rewatchCount} ${
                                     stored?.rewatchCount === 1 ? "time" : "times"
                                 }`}
+                            {isDownloaded && <span className="lesson-offline-indicator"><Check size={14} /> Available offline</span>}
                         </p>
                     </div>
                     <AutoToggles
@@ -4307,6 +4775,8 @@ function LearnPlayer({
                         onAutoNextChange={setAutoNext}
                         autoPlay={autoPlay}
                         onAutoPlayChange={setAutoPlay}
+                        locked={inputLocked}
+                        onLockedChange={setInputLocked}
                     />
                 </div>
             </section>
@@ -4364,6 +4834,8 @@ function LearnPlayer({
                     onSelectLesson={selectLesson}
                     autoNext={autoNext}
                     autoPlay={autoPlay}
+                    inputLocked={inputLocked}
+                    autoPlayRequest={autoPlayRequest}
                     countdown={countdown}
                     onCancelCountdown={clearCountdown}
                 />

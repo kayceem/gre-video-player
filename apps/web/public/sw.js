@@ -3,13 +3,14 @@
  *  - App shell / navigations: network-first, fallback to cache, then /offline.html
  *  - Same-origin static assets (js/css/fonts/img/json under /data,/icons,/assets): stale-while-revalidate
  *  - /api/catalog + /data/*.json: stale-while-revalidate (IndexedDB in app is source of truth for full offline)
- *  - /api/media (video): never cache (range requests + large files); let it fail offline with app UI message
+ *  - /api/media (video): complete lessons saved from Downloads are served with byte ranges offline
  *  - Mutations (POST/PUT/DELETE): never cache; app queues them in IndexedDB
  */
-const VERSION = "gre-desk-v4";
+const VERSION = "gre-desk-v5";
 const SHELL = `${VERSION}-shell`;
 const STATIC = `${VERSION}-static`;
 const DATA = `${VERSION}-data`;
+const MEDIA = "gre-desk-media-v1";
 const PRECACHE = ["/", "/offline.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png", "/icons/favicon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -23,7 +24,7 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const keys = await caches.keys();
       await Promise.all(
-        keys.filter((k) => !k.startsWith("gre-desk-v4")).map((k) => caches.delete(k))
+        keys.filter((k) => k !== MEDIA && !k.startsWith(VERSION)).map((k) => caches.delete(k))
       );
       await self.clients.claim();
       if ("navigationPreload" in self.registration) {
@@ -69,12 +70,40 @@ async function staleWhileRevalidate(event, cacheName) {
   return hit || network || Promise.reject(new Error("offline"));
 }
 
+async function cachedMedia(request) {
+  const cache = await caches.open(MEDIA);
+  const cached = await cache.match(request.url);
+  if (!cached) return fetch(request);
+  const range = request.headers.get("range");
+  if (!range) return cached;
+  const match = /^bytes=(\d+)-(\d*)$/.exec(range);
+  if (!match) return new Response(null, { status: 416, headers: { "Content-Range": "bytes */*" } });
+  const blob = await cached.blob();
+  const start = Number(match[1]);
+  const end = match[2] ? Math.min(Number(match[2]), blob.size - 1) : blob.size - 1;
+  if (start >= blob.size || end < start) {
+    return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${blob.size}` } });
+  }
+  return new Response(blob.slice(start, end + 1, blob.type), {
+    status: 206,
+    headers: {
+      "Content-Type": blob.type || "video/mp4",
+      "Accept-Ranges": "bytes",
+      "Content-Range": `bytes ${start}-${end}/${blob.size}`,
+      "Content-Length": String(end - start + 1),
+    },
+  });
+}
+
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
   if (request.method !== "GET") return;
-  // Never intercept media streams or mutations.
-  if (url.pathname.startsWith("/api/media/")) return;
+  // Downloaded complete media files need range-aware responses for video seeking.
+  if (url.pathname.startsWith("/api/media/")) {
+    event.respondWith(cachedMedia(request));
+    return;
+  }
   if (url.pathname.startsWith("/api/audio-proxy")) return;
 
   // Navigations: network-first with offline fallback.
