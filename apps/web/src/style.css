@@ -3349,13 +3349,16 @@ body {
     font-size: 14px;
 }
 .lesson-offline-indicator {
-    display: inline-flex;
+    display: inline-grid;
+    width: 18px;
+    height: 18px;
     align-items: center;
-    gap: 4px;
-    margin-left: 8px;
-    color: var(--success);
-    font-weight: 750;
-    white-space: nowrap;
+    justify-content: center;
+    margin-left: 7px;
+    border-radius: 50%;
+    background: var(--surface-muted, #e5e7eb);
+    color: var(--text-tertiary);
+    vertical-align: -3px;
 }
 .lesson-player-page {
     max-width: 1080px;

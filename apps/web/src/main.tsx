@@ -279,13 +279,13 @@ async function queueMutation(mutation: {
     url: string;
     method: string;
     body: unknown;
-}) {
+}, dedupeKey?: string) {
     const db = await openStore("mutations");
     return new Promise<void>((resolve, reject) => {
         const r = db
             .transaction("mutations", "readwrite")
             .objectStore("mutations")
-            .put({ id: newIdempotencyKey(), ...mutation });
+            .put({ id: dedupeKey ?? newIdempotencyKey(), ...mutation });
         r.onsuccess = () => resolve();
         r.onerror = () => reject(r.error);
     });
@@ -1881,7 +1881,7 @@ function NotesLibrary({ user, context }: { user: { id: string } | null; context:
 }
 type DownloadJob = {
     video: { id: string; mediaId: string; title: string; categoryTitle: string };
-    status: "downloading" | "paused" | "failed";
+    status: "queued" | "downloading" | "paused" | "failed";
     loaded: number;
     total: number;
     error?: string;
@@ -1900,6 +1900,10 @@ function Downloads({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) 
     const [downloadedSelected, setDownloadedSelected] = useState<Set<string>>(() => new Set());
     const [downloadSort, setDownloadSort] = useState<"newest" | "oldest">("newest");
     const controllers = useRef(new Map<string, AbortController>());
+    const cancelledJobs = useRef(new Set<string>());
+    const jobsRef = useRef(jobs);
+    const offlinePaused = useRef(false);
+    jobsRef.current = jobs;
     const course = catalogs.videos[subject];
     const lessons = useMemo(
         () => course.categories.flatMap((category) =>
@@ -2000,11 +2004,29 @@ function Downloads({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) 
     };
     const startQueue = async (queue: DownloadJob["video"][]) => {
         setMessage(null);
+        setJobs((current) => ({
+            ...current,
+            ...Object.fromEntries(
+                queue
+                    .filter((video) => !current[video.id])
+                    .map((video) => [video.id, { video, status: "queued" as const, loaded: 0, total: 0 }])
+            ),
+        }));
         try {
             await navigator.storage?.persist?.();
             for (const video of queue) {
+                if (cancelledJobs.current.has(video.id)) continue;
+                if (!navigator.onLine) {
+                    offlinePaused.current = true;
+                    setMessage("Downloads paused until you are back online.");
+                    return;
+                }
                 const completed = await startDownload(video);
                 if (!completed) {
+                    if (offlinePaused.current) {
+                        setMessage("Downloads paused until you are back online.");
+                        return;
+                    }
                     setMessage("Download queue stopped. Resume or restart it from Progress.");
                     return;
                 }
@@ -2014,6 +2036,31 @@ function Downloads({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) 
             setMessage("A download failed. Check your connection and available device storage, then try again.");
         }
     };
+    useEffect(() => {
+        const pauseForOffline = () => {
+            offlinePaused.current = true;
+            setJobs((current) => Object.fromEntries(Object.entries(current).map(([id, job]) => [
+                id,
+                job.status === "downloading" ? { ...job, status: "paused" as const } : job,
+            ])));
+            controllers.current.forEach((controller) => controller.abort());
+            setMessage("Downloads paused until you are back online.");
+        };
+        const resumeWhenOnline = () => {
+            if (!offlinePaused.current) return;
+            offlinePaused.current = false;
+            const pending = Object.values(jobsRef.current)
+                .filter((job) => job.status === "paused" || job.status === "queued")
+                .map((job) => job.video);
+            if (pending.length) void startQueue(pending);
+        };
+        addEventListener("offline", pauseForOffline);
+        addEventListener("online", resumeWhenOnline);
+        return () => {
+            removeEventListener("offline", pauseForOffline);
+            removeEventListener("online", resumeWhenOnline);
+        };
+    }, [jobs]);
     const runDownloads = (ids: string[]) => {
         const queue = lessons
             .filter((video) => ids.includes(video.id) && !downloadedIds.has(video.id))
@@ -2055,6 +2102,7 @@ function Downloads({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) 
         } : current);
     };
     const cancel = (id: string) => {
+        cancelledJobs.current.add(id);
         controllers.current.get(id)?.abort();
         setJobs((current) => {
             const next = { ...current };
@@ -2062,7 +2110,15 @@ function Downloads({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) 
             return next;
         });
     };
-    const restart = (job: DownloadJob) => startDownload(job.video);
+    const restart = (job: DownloadJob) => {
+        cancelledJobs.current.delete(job.video.id);
+        void startQueue([
+            job.video,
+            ...Object.values(jobs)
+                .filter((item) => item.status === "queued")
+                .map((item) => item.video),
+        ]);
+    };
     const replaceOldest = async () => {
         if (!limitRequest) return;
         const oldest = [...downloads]
@@ -2143,9 +2199,9 @@ function Downloads({ catalogs, boot }: { catalogs: Catalogs; boot: Bootstrap }) 
                 {Object.values(jobs).map((job) => <div className="download-progress-row" key={job.video.id}>
                     <div><strong><MathText value={job.video.title} /></strong><small>{job.video.categoryTitle}</small></div>
                     <div className="download-progress-meter"><i style={{ width: `${job.total ? Math.min(100, (job.loaded / job.total) * 100) : 0}%` }} /></div>
-                    <span>{job.status === "downloading" && job.total ? `${Math.round((job.loaded / job.total) * 100)}%` : job.status === "downloading" ? "Starting…" : job.status === "paused" ? "Paused" : "Failed"}</span>
+                    <span>{job.status === "queued" ? "Queued" : job.status === "downloading" && job.total ? `${Math.round((job.loaded / job.total) * 100)}%` : job.status === "downloading" ? "Starting…" : job.status === "paused" ? "Paused" : "Failed"}</span>
                     <div className="download-job-actions">
-                        {job.status === "downloading" ? <button onClick={() => pause(job.video.id)}><Pause size={15} /> Pause</button> : <button onClick={() => restart(job)}><RefreshCw size={15} /> Restart</button>}
+                        {job.status === "downloading" ? <button onClick={() => pause(job.video.id)}><Pause size={15} /> Pause</button> : job.status === "queued" ? null : <button onClick={() => restart(job)}><RefreshCw size={15} /> Restart</button>}
                         <button onClick={() => cancel(job.video.id)}><X size={15} /> Cancel</button>
                     </div>
                 </div>)}
@@ -2315,6 +2371,26 @@ function App() {
         setLocationVersion((version) => version + 1);
     };
     const mutate = useCallback(async (url: string, method: string, body: unknown) => {
+        const progressUpdate = method === "PUT" && /\/api\/me\/videos\/[^/]+\/progress$/.test(url);
+        const saveLocally = async () => {
+            await queueMutation(
+                { url, method, body },
+                progressUpdate ? `pending:${method}:${url}` : undefined
+            );
+        };
+        // Once offline is known, avoid wasteful failed fetches. Progress updates
+        // are coalesced by lesson so only the latest state waits to be synced.
+        if (!navigator.onLine) {
+            try {
+                await saveLocally();
+            } catch {
+                setNotice({
+                    message: "Unable to save progress on this device right now.",
+                    tone: "warning",
+                });
+            }
+            return;
+        }
         try {
             await api(url, { method, body: JSON.stringify(body) });
         } catch (error) {
@@ -2329,7 +2405,7 @@ function App() {
                 return;
             }
             try {
-                await queueMutation({ url, method, body });
+                await saveLocally();
                 setNotice({
                     message: navigator.onLine
                         ? "Saved on this device. It will sync when the server is reachable."
@@ -2780,7 +2856,10 @@ function App() {
                         <button onClick={() => setNotice(null)}>×</button>
                     </div>
                 )}
-                {route === "learn" ? (
+                <div hidden={route !== "downloads"}>
+                    <Downloads catalogs={catalogs} boot={boot} />
+                </div>
+                {route === "downloads" ? null : route === "learn" ? (
                     <Learn catalogs={catalogs} boot={boot} />
                 ) : route === "learn/video" ? (
                     <LearnPlayer
@@ -2855,8 +2934,6 @@ function App() {
                     />
                 ) : route === "notes" ? (
                     <NotesLibrary user={user} context={noteContext} />
-                ) : route === "downloads" ? (
-                    <Downloads catalogs={catalogs} boot={boot} />
                 ) : route === "account" ? (
                     <Account
                         user={user}
@@ -3293,6 +3370,8 @@ type LessonPlayerProps = {
     autoNext?: boolean;
     autoPlay?: boolean;
     inputLocked?: boolean;
+    offlineAvailable?: boolean;
+    downloadsReady?: boolean;
     autoPlayRequest?: number;
     countdown?: number | null;
     onCancelCountdown?: () => void;
@@ -3323,6 +3402,8 @@ function LessonPlayer(props: LessonPlayerProps) {
         autoNext,
         autoPlay,
         inputLocked = false,
+        offlineAvailable = false,
+        downloadsReady = false,
         autoPlayRequest = 0,
         countdown,
         onCancelCountdown,
@@ -3397,6 +3478,15 @@ function LessonPlayer(props: LessonPlayerProps) {
         setBuffering(false);
         setError(null);
         setAutoplayBlocked(false);
+
+        // Wait for local download metadata before deciding whether offline
+        // playback is possible, rather than issuing a doomed media request.
+        if (!navigator.onLine && !downloadsReady) return;
+        if (!navigator.onLine && downloadsReady && !offlineAvailable) {
+            setLoading(false);
+            setError("This lesson is not downloaded. Connect to the internet to play it.");
+            return;
+        }
 
         loadVideojs()
             .then((videojs) => {
@@ -3690,7 +3780,9 @@ function LessonPlayer(props: LessonPlayerProps) {
                     setLoading(false);
                     setBuffering(false);
                     setError(
-                        "This lesson could not be played. Check your connection, then try another lesson or reload the page."
+                        navigator.onLine
+                            ? "This lesson could not be played. Check your connection, then try another lesson or reload the page."
+                            : "This lesson is not available offline. Connect to the internet to play it."
                     );
                 });
 
@@ -3749,7 +3841,7 @@ function LessonPlayer(props: LessonPlayerProps) {
             player?.dispose();
             playerRef.current = null;
         };
-    }, [videoId, src, autoPlayRequest, playMedia]);
+    }, [videoId, src, autoPlayRequest, playMedia, offlineAvailable, downloadsReady]);
     useEffect(() => {
         if (
             playerRef.current &&
@@ -4546,6 +4638,7 @@ function LearnPlayer({
     const [autoPlayRequest, setAutoPlayRequest] = useState(0);
     const [inputLocked, setInputLocked] = useState(false);
     const [isDownloaded, setIsDownloaded] = useState(false);
+    const [downloadsReady, setDownloadsReady] = useState(false);
     const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const noteEditorActiveRef = useRef(false);
     const course = catalogs.videos[subject];
@@ -4587,9 +4680,17 @@ function LearnPlayer({
         let active = true;
         const refresh = () => listOfflineDownloads()
             .then((downloads) => {
-                if (active) setIsDownloaded(downloads.some((item) => item.videoId === video?.id));
+                if (active) {
+                    setIsDownloaded(downloads.some((item) => item.videoId === video?.id));
+                    setDownloadsReady(true);
+                }
             })
-            .catch(() => active && setIsDownloaded(false));
+            .catch(() => {
+                if (active) {
+                    setIsDownloaded(false);
+                    setDownloadsReady(true);
+                }
+            });
         refresh();
         window.addEventListener("gre-downloads-changed", refresh);
         return () => {
@@ -4767,7 +4868,7 @@ function LearnPlayer({
                                 ` · Watched ${stored?.rewatchCount} ${
                                     stored?.rewatchCount === 1 ? "time" : "times"
                                 }`}
-                            {isDownloaded && <span className="lesson-offline-indicator"><Check size={14} /> Available offline</span>}
+                            {isDownloaded && <span className="lesson-offline-indicator" title="Available offline" aria-label="Available offline"><Check size={13} /></span>}
                         </p>
                     </div>
                     <AutoToggles
@@ -4835,6 +4936,8 @@ function LearnPlayer({
                     autoNext={autoNext}
                     autoPlay={autoPlay}
                     inputLocked={inputLocked}
+                    offlineAvailable={!navigator.onLine && isDownloaded}
+                    downloadsReady={!navigator.onLine && downloadsReady}
                     autoPlayRequest={autoPlayRequest}
                     countdown={countdown}
                     onCancelCountdown={clearCountdown}
